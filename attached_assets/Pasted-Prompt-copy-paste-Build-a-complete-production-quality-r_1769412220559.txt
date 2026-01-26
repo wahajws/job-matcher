@@ -1,0 +1,283 @@
+Prompt (copy/paste)
+
+Build a complete, production-quality, responsive ReactJS frontend for a “CV → Job Matching” web app. Frontend only (no real backend). I’m using Replit, so it must run immediately after install. Use React + TypeScript + Vite. Use MUI (Material UI) for UI components and responsiveness. Use React Router for routing. Use TanStack Query (React Query) for data fetching with mocked APIs. Use Zustand for global state (auth/user role + UI state). Use React Hook Form + Zod for forms and validation. Provide clean folder structure and reusable components.
+
+App concept
+
+The app ingests CV PDFs (admin bulk upload + candidate upload), shows extracted “Matrix” created by Qwen (simulated), then matches candidates to job postings with a score and explanation. Also supports location filtering using phone country code (simulated).
+
+Roles
+
+Implement two roles with a simple role switcher (no real auth):
+
+Admin
+
+Candidate
+Store role in Zustand and persist in localStorage.
+
+1) Must-have pages / routes
+
+Use React Router with these routes:
+
+Public/common
+
+/login (fake login page)
+
+Select role (Admin/Candidate) + name + email
+
+“Continue” sets role state and routes accordingly
+
+/ redirect:
+
+Admin → /admin/dashboard
+
+Candidate → /candidate/dashboard
+
+Admin routes
+
+/admin/dashboard
+
+KPI cards (mock counts): total CVs, processed, needs review, jobs, matches generated
+
+Recent uploads table
+
+Recent jobs table
+
+/admin/cvs
+
+CV list table with filters: status (Uploaded/Parsing/Matrix Ready/Failed/Needs Review), country, tags, score threshold (optional)
+
+Search by name/email/skill keyword
+
+Row click opens CV detail drawer or navigates to /admin/cvs/:id
+
+/admin/cvs/upload
+
+Bulk upload UI:
+
+Drag-and-drop multi-file PDF upload
+
+Show per-file progress (mocked)
+
+Batch tag input (e.g., “Jan 2026 Batch”)
+
+Dedup simulation: show warning if filename duplicates
+
+Show an “Ingestion Report” after upload with success/failed
+
+/admin/cvs/:id
+
+Candidate profile header (name, email, phone, inferred country)
+
+Tabs:
+
+“Matrix” (structured matrix JSON rendered nicely)
+
+“Evidence” (highlighted snippets)
+
+“Matches” (job list with score + view details)
+
+“Notes” (admin notes + tags + status)
+
+/admin/jobs
+
+Jobs list with status (Draft/Published/Closed), location type, country/city
+
+Create job button → /admin/jobs/new
+
+/admin/jobs/new
+
+Job creation form:
+
+Title, Department, Location type (Onsite/Hybrid/Remote), Country, City
+
+Job description text area
+
+Must-have skills chips input
+
+Nice-to-have skills chips input
+
+Min years experience, seniority level
+
+Publish toggle
+
+On submit: create mock job and auto-generate “Job Matrix” (simulated Qwen output) and navigate to /admin/jobs/:id
+
+/admin/jobs/:id
+
+Job header + job matrix panel
+
+Ranked candidates table:
+
+Candidate name, country, score, breakdown mini-bars, status (shortlisted/rejected)
+
+Filters:
+
+Country filter
+
+Minimum score slider
+
+Must-have skill filter (multi-select)
+
+Candidate row click opens a right-side drawer:
+
+score explanation
+
+matching breakdown
+
+gaps (missing skills)
+
+actions: shortlist / reject / add note
+
+/admin/settings
+
+Theme toggle (light/dark)
+
+“Mock mode” notice
+
+Prompt/model metadata fields (read-only): “Qwen model: latest” (display only)
+
+Candidate routes
+
+/candidate/dashboard
+
+Upload CV card (single PDF)
+
+“My Matrix” card (if available)
+
+Recommended jobs list with scores
+
+/candidate/profile
+
+Profile form: name, email, phone, country (editable), headline
+
+“Re-run matching (mock)” button
+
+/candidate/jobs
+
+Job list with filter by location type, country
+
+Job detail drawer with “Why I match” explanation
+
+/candidate/jobs/:id
+
+Full job description + your match score + gaps + apply button (mock)
+
+2) UI/UX requirements
+
+Make it modern, clean, enterprise-like.
+
+Fully responsive:
+
+Mobile: stacked cards, drawers become full-screen
+
+Desktop: tables + side drawers
+
+Use MUI App Bar + responsive sidebar navigation:
+
+Admin menu: Dashboard, CVs, Upload CVs, Jobs, Settings
+
+Candidate menu: Dashboard, Jobs, Profile
+
+Use consistent design tokens and spacing.
+
+Provide loading skeletons, empty states, and error states.
+
+3) Data model (frontend types)
+
+Create TypeScript types for:
+
+User, Role
+
+Candidate, CvFile, CvStatus
+
+CandidateMatrix (skills array, roles, years, domains, education, languages, locationSignals, confidence, evidence[])
+
+Job, JobStatus, JobMatrix
+
+MatchResult (score 0-100, breakdown, explanation, gaps)
+
+AdminNote, Tag
+
+4) Mock API layer (no backend)
+
+Create /src/api/ with functions that return Promises + simulate latency:
+
+login()
+
+listCandidates(), getCandidate(id), uploadCvs(files, batchTag)
+
+listJobs(), createJob(), getJob(id)
+
+getMatchesForJob(jobId), getMatchesForCandidate(candidateId)
+
+shortlistCandidate(jobId, candidateId), rejectCandidate(...), addNote(...)
+
+Simulate “processing pipeline”:
+
+After upload, CV status goes Uploaded → Parsing → Matrix Ready with timed transitions.
+
+Generate matrices and match scores deterministically from seeded randomness (so UI is stable).
+
+Use TanStack Query for fetching and caching. Provide query keys.
+
+5) Components to build (reusable)
+
+AppLayout with sidebar + topbar
+
+DataTable wrapper (MUI Table) with sorting + pagination (client-side)
+
+FileDropzone for PDF upload (drag/drop)
+
+ScoreBadge (0–100) + color mapping
+
+BreakdownBar (skills/experience/domain/location)
+
+MatrixView (pretty rendering of matrix sections)
+
+EvidenceList with “copy snippet”
+
+StatusChip
+
+FilterBar components
+
+RightDrawer for detail panels
+
+ConfirmDialog for reject/shortlist
+
+Toast notifications (MUI Snackbar)
+
+6) Deliverables
+
+Output all necessary files with a clear project tree, including:
+
+package.json with dependencies
+
+vite.config.ts
+
+src/main.tsx, src/App.tsx
+
+src/routes/*
+
+src/pages/* for all pages
+
+src/components/*
+
+src/api/*
+
+src/store/* (Zustand)
+
+src/theme/*
+
+src/types/*
+
+src/utils/* (phone country code parsing helper, seeded random helper)
+Include instructions to run in Replit:
+
+install
+
+run dev
+
+Do NOT implement any backend. Do NOT include server code. Keep API calls mocked.
+
+Also, ensure the UI copy references: “Matrix generated by Qwen (latest)” as a label in relevant places (candidate matrix view and job matrix view).
