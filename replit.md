@@ -97,3 +97,23 @@ Preferred communication style: Simple, everyday language.
 - **@replit/vite-plugin-runtime-error-modal**: Error overlay for development
 - **@replit/vite-plugin-cartographer**: Development tooling
 - **@replit/vite-plugin-dev-banner**: Development banner display
+
+## Recent Changes (January 2026)
+
+### Frontend Implementation Complete
+- Created comprehensive TypeScript type system for all entities (Candidates, Jobs, Matches, Matrices)
+- Implemented complete mock API layer with realistic seeded data generation
+- Built all Admin pages: Dashboard, CV List, CV Upload, CV Detail, Job List, Job New, Job Detail, Settings
+- Built all Candidate pages: Dashboard, Profile, Job List, Job Detail
+- Created reusable components: DataTable, ScoreBadge, StatusChip, BreakdownBar, MatrixView, FileDropzone, RightDrawer, ConfirmDialog
+- Implemented role-based routing with ProtectedRoute, AdminRoute, and CandidateRoute guards
+- Added dark mode toggle with persistent theme storage
+- Configured professional blue/teal enterprise design theme with custom CSS variables
+
+### Features Implemented
+- CV upload with drag-and-drop support and batch upload
+- AI-simulated matrix generation for CVs (Qwen model simulation)
+- Job posting with must-have and nice-to-have skill requirements
+- Intelligent matching with score breakdown visualization
+- Candidate shortlisting and rejection with admin notes
+- Responsive design for desktop and mobile devices
