@@ -16,6 +16,7 @@ import CvUpload from "@/pages/admin/CvUpload";
 import CvDetail from "@/pages/admin/CvDetail";
 import JobList from "@/pages/admin/JobList";
 import JobNew from "@/pages/admin/JobNew";
+import JobNewFromUrl from "@/pages/admin/JobNewFromUrl";
 import JobDetail from "@/pages/admin/JobDetail";
 import Settings from "@/pages/admin/Settings";
 
@@ -138,6 +139,13 @@ function Router() {
         <ProtectedRoute>
           <AdminRoute>
             <JobNew />
+          </AdminRoute>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/admin/jobs/new-from-url">
+        <ProtectedRoute>
+          <AdminRoute>
+            <JobNewFromUrl />
           </AdminRoute>
         </ProtectedRoute>
       </Route>

@@ -1,0 +1,29 @@
+import { Router } from 'express';
+import express from 'express';
+import { jobController } from '../controllers/jobController.js';
+import { upload } from '../middleware/upload.js';
+
+const router = Router();
+
+// JSON parser for the from-url route specifically
+const jsonParser = express.json();
+
+router.get('/', (req, res) => jobController.list(req, res));
+router.get('/:id', (req, res) => jobController.get(req, res));
+router.post('/', (req, res) => jobController.create(req, res));
+router.post('/from-url', jsonParser, (req, res) => jobController.createFromUrl(req, res));
+// PDF upload route - must be before /:id to avoid conflicts
+router.post('/from-pdf', (req, res, next) => {
+  upload.single('pdf')(req, res, (err: any) => {
+    if (err) {
+      return res.status(400).json({ message: err.message || 'File upload failed' });
+    }
+    next();
+  });
+}, (req, res) => jobController.createFromPdf(req, res));
+router.put('/:id', (req, res) => jobController.update(req, res));
+router.delete('/:id', (req, res) => jobController.delete(req, res));
+router.get('/:id/matrix', (req, res) => jobController.getMatrix(req, res));
+router.post('/:id/generate-matrix', (req, res) => jobController.generateMatrix(req, res));
+
+export default router;

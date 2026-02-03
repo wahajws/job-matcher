@@ -36,7 +36,7 @@ export default function CvUpload() {
     },
   });
 
-  const pendingFiles: File[] = [];
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
 
   const handleFilesAccepted = (acceptedFiles: File[]) => {
     const newFiles: UploadProgress[] = acceptedFiles.map((file) => ({
@@ -45,20 +45,20 @@ export default function CvUpload() {
       status: 'pending',
     }));
     setFiles((prev) => [...prev, ...newFiles]);
-    pendingFiles.push(...acceptedFiles);
+    setPendingFiles((prev) => [...prev, ...acceptedFiles]);
   };
 
   const handleRemoveFile = (filename: string) => {
     setFiles((prev) => prev.filter((f) => f.filename !== filename));
+    setPendingFiles((prev) => prev.filter((f) => f.name !== filename));
   };
 
   const handleUpload = () => {
-    const filesToUpload = files
-      .filter((f) => f.status === 'pending')
-      .map((f) => {
-        const file = new File([''], f.filename, { type: 'application/pdf' });
-        return file;
-      });
+    // Use the actual File objects from pendingFiles, not empty File objects
+    const filesToUpload = pendingFiles.filter((file) => {
+      const fileStatus = files.find((f) => f.filename === file.name)?.status;
+      return fileStatus === 'pending';
+    });
 
     // Simulate updating progress
     setFiles((prev) =>
@@ -214,6 +214,7 @@ export default function CvUpload() {
               <Button
                 onClick={() => {
                   setFiles([]);
+                  setPendingFiles([]);
                   setUploadResult(null);
                 }}
                 data-testid="button-upload-more"

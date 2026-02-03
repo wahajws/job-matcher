@@ -1,13 +1,4 @@
-import { delay } from '@/utils/helpers';
-import {
-  mockCandidates,
-  mockJobs,
-  mockMatches,
-  getDashboardStats,
-  generateNotes,
-  generateCandidateMatrix,
-  generateJobMatrix,
-} from './mockData';
+import { apiGet, apiPost, apiPut, apiDelete, apiUpload, setAuthToken } from '@/lib/apiClient';
 import type {
   Candidate,
   Job,
@@ -16,25 +7,26 @@ import type {
   DashboardStats,
   UploadResult,
   CvStatus,
+  User,
+  JobReport,
 } from '@/types';
 
-// Simulate API latency
-const API_DELAY = 300;
-
-// In-memory state (simulates backend)
-let candidates = [...mockCandidates];
-let jobs = [...mockJobs];
-let matches = [...mockMatches];
-const notes: Record<string, AdminNote[]> = {};
-
-// Initialize notes for all candidates
-candidates.forEach((c) => {
-  notes[c.id] = generateNotes(c.id);
-});
-
 // ==================== AUTH ====================
-export async function login(): Promise<void> {
-  await delay(API_DELAY);
+export async function login(username: string, password: string): Promise<{ token: string; user: User }> {
+  const response = await apiPost<{ token: string; user: User }>('/auth/login', { username, password });
+  if (response.token) {
+    setAuthToken(response.token);
+  }
+  return response;
+}
+
+export async function logout(): Promise<void> {
+  await apiPost('/auth/logout');
+  setAuthToken(null);
+}
+
+export async function getCurrentUser(): Promise<User> {
+  return apiGet<User>('/auth/me');
 }
 
 // ==================== CANDIDATES ====================
@@ -44,136 +36,56 @@ export async function listCandidates(filters?: {
   search?: string;
   tags?: string[];
   minScore?: number;
+  sortBy?: string;
 }): Promise<Candidate[]> {
-  await delay(API_DELAY);
-  
-  let result = [...candidates];
-  
-  if (filters?.status) {
-    result = result.filter((c) => c.cvFile?.status === filters.status);
-  }
-  
-  if (filters?.country) {
-    result = result.filter((c) => c.country === filters.country);
-  }
-  
-  if (filters?.search) {
-    const searchLower = filters.search.toLowerCase();
-    result = result.filter(
-      (c) =>
-        c.name.toLowerCase().includes(searchLower) ||
-        c.email.toLowerCase().includes(searchLower) ||
-        c.matrix?.skills.some((s) => s.name.toLowerCase().includes(searchLower))
-    );
-  }
-  
-  if (filters?.tags && filters.tags.length > 0) {
-    result = result.filter((c) => filters.tags!.some((t) => c.tags.includes(t)));
-  }
-  
-  return result;
+  const params = new URLSearchParams();
+  if (filters?.status) params.append('status', filters.status);
+  if (filters?.country) params.append('country', filters.country);
+  if (filters?.search) params.append('search', filters.search);
+  if (filters?.tags) filters.tags.forEach(tag => params.append('tags', tag));
+  if (filters?.minScore) params.append('minScore', filters.minScore.toString());
+  if (filters?.sortBy) params.append('sortBy', filters.sortBy);
+
+  const query = params.toString();
+  return apiGet<Candidate[]>(`/candidates${query ? `?${query}` : ''}`);
 }
 
-export async function getCandidate(id: string): Promise<Candidate | undefined> {
-  await delay(API_DELAY);
-  return candidates.find((c) => c.id === id);
+export async function getCandidate(id: string): Promise<Candidate> {
+  return apiGet<Candidate>(`/candidates/${id}`);
 }
 
 export async function updateCandidate(
   id: string,
   updates: Partial<Candidate>
 ): Promise<Candidate> {
-  await delay(API_DELAY);
-  const index = candidates.findIndex((c) => c.id === id);
-  if (index === -1) throw new Error('Candidate not found');
-  
-  candidates[index] = { ...candidates[index], ...updates };
-  return candidates[index];
+  return apiPut<Candidate>(`/candidates/${id}`, updates);
+}
+
+export async function deleteCandidate(id: string): Promise<void> {
+  await apiDelete(`/candidates/${id}`);
 }
 
 export async function uploadCvs(
   files: File[],
   batchTag?: string
 ): Promise<UploadResult> {
-  await delay(1500);
-  
-  const existingFilenames = new Set(candidates.map((c) => c.cvFile?.filename));
-  const result: UploadResult = {
-    successful: 0,
-    failed: 0,
-    duplicates: 0,
-    files: [],
-  };
-  
-  for (const file of files) {
-    if (existingFilenames.has(file.name)) {
-      result.duplicates++;
-      result.files.push({
-        filename: file.name,
-        progress: 100,
-        status: 'duplicate',
-        error: 'File already exists',
-      });
-    } else if (Math.random() > 0.9) {
-      result.failed++;
-      result.files.push({
-        filename: file.name,
-        progress: 100,
-        status: 'failed',
-        error: 'Invalid PDF format',
-      });
-    } else {
-      result.successful++;
-      result.files.push({
-        filename: file.name,
-        progress: 100,
-        status: 'success',
-      });
-      
-      // Create new candidate
-      const id = `cand-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-      const nameParts = file.name.replace('.pdf', '').replace(/_/g, ' ').split(' ');
-      const name = nameParts.slice(0, 2).join(' ');
-      
-      candidates.push({
-        id,
-        name,
-        email: `${name.toLowerCase().replace(' ', '.')}@example.com`,
-        phone: '+1' + Math.floor(Math.random() * 9000000000 + 1000000000),
-        country: 'US',
-        countryCode: 'US',
-        cvFile: {
-          id: `cv-${id}`,
-          candidateId: id,
-          filename: file.name,
-          uploadedAt: new Date(),
-          status: 'uploaded',
-          batchTag,
-          fileSize: file.size,
-        },
-        createdAt: new Date(),
-        tags: [],
-      });
-      
-      // Simulate processing pipeline
-      setTimeout(() => {
-        const cand = candidates.find((c) => c.id === id);
-        if (cand?.cvFile) {
-          cand.cvFile.status = 'parsing';
-        }
-      }, 2000);
-      
-      setTimeout(() => {
-        const cand = candidates.find((c) => c.id === id);
-        if (cand?.cvFile) {
-          cand.cvFile.status = 'matrix_ready';
-          cand.matrix = generateCandidateMatrix(id);
-        }
-      }, 5000);
-    }
+  const formData = new FormData();
+  files.forEach(file => {
+    formData.append('files', file);
+  });
+  if (batchTag) {
+    formData.append('batchTag', batchTag);
   }
-  
-  return result;
+
+  return apiUpload<UploadResult>('/candidates/upload', formData);
+}
+
+export async function getCandidateMatrix(candidateId: string) {
+  return apiGet(`/candidates/${candidateId}/matrix`);
+}
+
+export async function rerunMatching(candidateId: string): Promise<void> {
+  await apiPost(`/candidates/${candidateId}/rerun-matching`);
 }
 
 // ==================== JOBS ====================
@@ -182,113 +94,101 @@ export async function listJobs(filters?: {
   locationType?: string;
   country?: string;
 }): Promise<Job[]> {
-  await delay(API_DELAY);
-  
-  let result = [...jobs];
-  
-  if (filters?.status) {
-    result = result.filter((j) => j.status === filters.status);
-  }
-  
-  if (filters?.locationType) {
-    result = result.filter((j) => j.locationType === filters.locationType);
-  }
-  
-  if (filters?.country) {
-    result = result.filter((j) => j.country === filters.country);
-  }
-  
-  return result;
+  const params = new URLSearchParams();
+  if (filters?.status) params.append('status', filters.status);
+  if (filters?.locationType) params.append('locationType', filters.locationType);
+  if (filters?.country) params.append('country', filters.country);
+
+  const query = params.toString();
+  return apiGet<Job[]>(`/jobs${query ? `?${query}` : ''}`);
 }
 
-export async function getJob(id: string): Promise<Job | undefined> {
-  await delay(API_DELAY);
-  return jobs.find((j) => j.id === id);
+export async function getJob(id: string): Promise<Job> {
+  return apiGet<Job>(`/jobs/${id}`);
 }
 
 export async function createJob(
   jobData: Omit<Job, 'id' | 'createdAt' | 'matrix'>
 ): Promise<Job> {
-  await delay(API_DELAY);
-  
-  const id = `job-${Date.now()}`;
-  const job: Job = {
-    ...jobData,
-    id,
-    createdAt: new Date(),
-    matrix: jobData.status === 'published' ? generateJobMatrix(id) : undefined,
-  };
-  
-  jobs.push(job);
-  return job;
+  return apiPost<Job>('/jobs', jobData);
+}
+
+export async function createJobFromUrl(
+  url: string,
+  status: 'draft' | 'published' = 'draft'
+): Promise<Job> {
+  return apiPost<Job>('/jobs/from-url', { url, status });
+}
+
+export async function createJobFromPdf(
+  pdfFile: File,
+  status: 'draft' | 'published' = 'draft'
+): Promise<Job> {
+  const formData = new FormData();
+  formData.append('pdf', pdfFile);
+  formData.append('status', status);
+  return apiUpload<Job>('/jobs/from-pdf', formData);
 }
 
 export async function updateJob(id: string, updates: Partial<Job>): Promise<Job> {
-  await delay(API_DELAY);
-  const index = jobs.findIndex((j) => j.id === id);
-  if (index === -1) throw new Error('Job not found');
-  
-  jobs[index] = { ...jobs[index], ...updates };
-  
-  // Generate matrix if publishing
-  if (updates.status === 'published' && !jobs[index].matrix) {
-    jobs[index].matrix = generateJobMatrix(id);
-  }
-  
-  return jobs[index];
+  return apiPut<Job>(`/jobs/${id}`, updates);
+}
+
+export async function deleteJob(id: string): Promise<void> {
+  await apiDelete(`/jobs/${id}`);
+}
+
+export async function getJobMatrix(jobId: string) {
+  return apiGet(`/jobs/${jobId}/matrix`);
+}
+
+export async function generateJobMatrix(jobId: string): Promise<void> {
+  await apiPost(`/jobs/${jobId}/generate-matrix`);
+}
+
+// ==================== REPORTS ====================
+export async function generateJobReport(jobId: string): Promise<JobReport> {
+  return apiPost<JobReport>(`/jobs/${jobId}/generate-report`);
+}
+
+export async function getJobReport(jobId: string): Promise<JobReport> {
+  return apiGet<JobReport>(`/jobs/${jobId}/report`);
+}
+
+export async function deleteJobReport(jobId: string): Promise<void> {
+  await apiDelete(`/jobs/${jobId}/report`);
 }
 
 // ==================== MATCHES ====================
 export async function getMatchesForJob(jobId: string): Promise<MatchResult[]> {
-  await delay(API_DELAY);
-  return matches.filter((m) => m.jobId === jobId).sort((a, b) => b.score - a.score);
+  return apiGet<MatchResult[]>(`/matches/job/${jobId}`);
 }
 
 export async function getMatchesForCandidate(candidateId: string): Promise<
   (MatchResult & { job?: Job })[]
 > {
-  await delay(API_DELAY);
-  return matches
-    .filter((m) => m.candidateId === candidateId)
-    .map((m) => ({
-      ...m,
-      job: jobs.find((j) => j.id === m.jobId),
-    }))
-    .sort((a, b) => b.score - a.score);
+  return apiGet<(MatchResult & { job?: Job })[]>(`/matches/candidate/${candidateId}`);
+}
+
+export async function calculateMatches(jobId: string): Promise<void> {
+  await apiPost(`/matches/job/${jobId}/calculate`);
 }
 
 export async function shortlistCandidate(
-  jobId: string,
-  candidateId: string
+  matchId: string
 ): Promise<MatchResult> {
-  await delay(API_DELAY);
-  const match = matches.find(
-    (m) => m.jobId === jobId && m.candidateId === candidateId
-  );
-  if (!match) throw new Error('Match not found');
-  
-  match.status = 'shortlisted';
-  return match;
+  return apiPost<MatchResult>(`/matches/${matchId}/shortlist`);
 }
 
 export async function rejectCandidate(
-  jobId: string,
-  candidateId: string
+  matchId: string
 ): Promise<MatchResult> {
-  await delay(API_DELAY);
-  const match = matches.find(
-    (m) => m.jobId === jobId && m.candidateId === candidateId
-  );
-  if (!match) throw new Error('Match not found');
-  
-  match.status = 'rejected';
-  return match;
+  return apiPost<MatchResult>(`/matches/${matchId}/reject`);
 }
 
 // ==================== NOTES ====================
 export async function getNotes(candidateId: string): Promise<AdminNote[]> {
-  await delay(API_DELAY);
-  return notes[candidateId] || [];
+  return apiGet<AdminNote[]>(`/candidates/${candidateId}/notes`);
 }
 
 export async function addNote(
@@ -296,71 +196,38 @@ export async function addNote(
   content: string,
   authorName: string
 ): Promise<AdminNote> {
-  await delay(API_DELAY);
-  
-  const note: AdminNote = {
-    id: `note-${Date.now()}`,
-    candidateId,
-    authorId: 'current-user',
-    authorName,
-    content,
-    createdAt: new Date(),
-  };
-  
-  if (!notes[candidateId]) {
-    notes[candidateId] = [];
-  }
-  notes[candidateId].unshift(note);
-  
-  return note;
+  return apiPost<AdminNote>(`/candidates/${candidateId}/notes`, { content, authorName });
+}
+
+// ==================== TAGS ====================
+export async function getCandidateTags(candidateId: string) {
+  return apiGet(`/candidates/${candidateId}/tags`);
+}
+
+export async function addCandidateTag(candidateId: string, name: string, color?: string) {
+  return apiPost(`/candidates/${candidateId}/tags`, { name, color });
+}
+
+export async function deleteCandidateTag(candidateId: string, tagId: string) {
+  await apiDelete(`/candidates/${candidateId}/tags/${tagId}`);
 }
 
 // ==================== DASHBOARD ====================
 export async function getAdminDashboardStats(): Promise<DashboardStats> {
-  await delay(API_DELAY);
-  return getDashboardStats();
+  return apiGet<DashboardStats>('/dashboard/stats');
 }
 
 export async function getRecentUploads(): Promise<Candidate[]> {
-  await delay(API_DELAY);
-  return [...candidates]
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 5);
+  return apiGet<Candidate[]>('/dashboard/recent-uploads');
 }
 
 export async function getRecentJobs(): Promise<Job[]> {
-  await delay(API_DELAY);
-  return [...jobs]
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 5);
+  return apiGet<Job[]>('/dashboard/recent-jobs');
 }
 
 // ==================== CANDIDATE-FACING ====================
 export async function getRecommendedJobs(candidateId: string): Promise<
   (MatchResult & { job?: Job })[]
 > {
-  await delay(API_DELAY);
-  return matches
-    .filter((m) => m.candidateId === candidateId)
-    .map((m) => ({
-      ...m,
-      job: jobs.find((j) => j.id === m.jobId),
-    }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 10);
-}
-
-export async function rerunMatching(candidateId: string): Promise<void> {
-  await delay(1000);
-  // Simulate re-running matches with slightly different scores
-  matches = matches.map((m) => {
-    if (m.candidateId === candidateId) {
-      return {
-        ...m,
-        score: Math.min(100, Math.max(0, m.score + Math.floor(Math.random() * 10 - 5))),
-        calculatedAt: new Date(),
-      };
-    }
-    return m;
-  });
+  return getMatchesForCandidate(candidateId);
 }

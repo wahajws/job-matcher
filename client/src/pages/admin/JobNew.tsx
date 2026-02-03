@@ -4,7 +4,7 @@ import { Link, useLocation } from 'wouter';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { createJob } from '@/api';
+import { createJob, createJobFromPdf } from '@/api';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -34,6 +34,7 @@ import type { LocationType, SeniorityLevel } from '@/types';
 const jobSchema = z.object({
   title: z.string().min(3, 'Title must be at least 3 characters'),
   department: z.string().min(2, 'Department is required'),
+  company: z.string().optional(),
   locationType: z.enum(['onsite', 'hybrid', 'remote']),
   country: z.string().min(2, 'Country is required'),
   city: z.string().min(2, 'City is required'),
@@ -52,12 +53,15 @@ export default function JobNew() {
   const [niceToHaveSkills, setNiceToHaveSkills] = useState<string[]>([]);
   const [skillInput, setSkillInput] = useState('');
   const [niceSkillInput, setNiceSkillInput] = useState('');
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [usePdfUpload, setUsePdfUpload] = useState(false);
 
   const form = useForm<JobFormData>({
     resolver: zodResolver(jobSchema),
     defaultValues: {
       title: '',
       department: '',
+      company: '',
       locationType: 'hybrid',
       country: 'US',
       city: '',
@@ -69,26 +73,36 @@ export default function JobNew() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: JobFormData) =>
-      createJob({
-        title: data.title,
-        department: data.department,
-        locationType: data.locationType as LocationType,
-        country: data.country,
-        city: data.city,
-        description: data.description,
-        mustHaveSkills,
-        niceToHaveSkills,
-        minYearsExperience: data.minYearsExperience,
-        seniorityLevel: data.seniorityLevel as SeniorityLevel,
-        status: data.publish ? 'published' : 'draft',
-      }),
+    mutationFn: async (data: JobFormData) => {
+      if (usePdfUpload && pdfFile) {
+        return createJobFromPdf(pdfFile, data.publish ? 'published' : 'draft');
+      } else {
+        return createJob({
+          title: data.title,
+          department: data.department,
+          company: data.company || undefined,
+          locationType: data.locationType as LocationType,
+          country: data.country,
+          city: data.city,
+          description: data.description,
+          mustHaveSkills,
+          niceToHaveSkills,
+          minYearsExperience: data.minYearsExperience,
+          seniorityLevel: data.seniorityLevel as SeniorityLevel,
+          status: data.publish ? 'published' : 'draft',
+        });
+      }
+    },
     onSuccess: (job) => {
       toast({ title: 'Job created successfully' });
       setLocation(`/admin/jobs/${job.id}`);
     },
-    onError: () => {
-      toast({ title: 'Failed to create job', variant: 'destructive' });
+    onError: (error: any) => {
+      toast({ 
+        title: 'Failed to create job', 
+        description: error.message || 'An error occurred',
+        variant: 'destructive' 
+      });
     },
   });
 
@@ -110,7 +124,33 @@ export default function JobNew() {
   };
 
   const onSubmit = (data: JobFormData) => {
+    if (usePdfUpload) {
+      if (!pdfFile) {
+        toast({
+          title: 'PDF file required',
+          description: 'Please select a PDF file to upload',
+          variant: 'destructive',
+        });
+        return;
+      }
+    }
     createMutation.mutate(data);
+  };
+
+  const handlePdfSubmit = () => {
+    if (!pdfFile) {
+      toast({
+        title: 'PDF file required',
+        description: 'Please select a PDF file to upload',
+        variant: 'destructive',
+      });
+      return;
+    }
+    const publishValue = form.getValues('publish');
+    createMutation.mutate({
+      ...form.getValues(),
+      publish: publishValue,
+    });
   };
 
   return (
@@ -127,7 +167,71 @@ export default function JobNew() {
         </div>
       </div>
 
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Upload Method</CardTitle>
+          <CardDescription>Choose how you want to create the job</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center space-x-2">
+            <input
+              type="radio"
+              id="manual"
+              name="uploadMethod"
+              checked={!usePdfUpload}
+              onChange={() => setUsePdfUpload(false)}
+              className="h-4 w-4"
+            />
+            <label htmlFor="manual" className="text-sm font-medium cursor-pointer">
+              Manual Entry
+            </label>
+          </div>
+          <div className="flex items-center space-x-2">
+            <input
+              type="radio"
+              id="pdf"
+              name="uploadMethod"
+              checked={usePdfUpload}
+              onChange={() => setUsePdfUpload(true)}
+              className="h-4 w-4"
+            />
+            <label htmlFor="pdf" className="text-sm font-medium cursor-pointer">
+              Upload PDF
+            </label>
+          </div>
+          {usePdfUpload && (
+            <div className="space-y-2">
+              <input
+                type="file"
+                accept=".pdf"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    if (file.type !== 'application/pdf') {
+                      toast({
+                        title: 'Invalid file type',
+                        description: 'Please upload a PDF file',
+                        variant: 'destructive',
+                      });
+                      return;
+                    }
+                    setPdfFile(file);
+                  }
+                }}
+                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-white hover:file:bg-primary/90"
+              />
+              {pdfFile && (
+                <p className="text-sm text-muted-foreground">
+                  Selected: {pdfFile.name} ({(pdfFile.size / 1024).toFixed(2)} KB)
+                </p>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <Form {...form}>
+        {!usePdfUpload ? (
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
           <Card>
             <CardHeader>
@@ -143,6 +247,21 @@ export default function JobNew() {
                     <FormControl>
                       <Input placeholder="e.g., Senior Software Engineer" {...field} data-testid="input-title" />
                     </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="company"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Company</FormLabel>
+                    <FormControl>
+                      <Input placeholder="e.g., Tech Corp" {...field} data-testid="input-company" />
+                    </FormControl>
+                    <FormDescription>Optional: Company or organization name</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -425,7 +544,48 @@ export default function JobNew() {
             </Button>
           </div>
         </form>
+        ) : null}
       </Form>
+
+      {usePdfUpload && (
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                  Publish Immediately
+                </label>
+                <p className="text-sm text-muted-foreground">
+                  Publishing will generate the Job Matrix and start matching candidates
+                </p>
+              </div>
+              <Switch
+                checked={form.watch('publish')}
+                onCheckedChange={(checked) => form.setValue('publish', checked)}
+                data-testid="switch-publish-pdf"
+              />
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {usePdfUpload && (
+        <div className="flex justify-end gap-3">
+          <Link href="/admin/jobs">
+            <Button variant="outline" type="button">
+              Cancel
+            </Button>
+          </Link>
+          <Button
+            type="button"
+            onClick={handlePdfSubmit}
+            disabled={createMutation.isPending || !pdfFile}
+            data-testid="button-create-pdf"
+          >
+            {createMutation.isPending ? 'Creating...' : 'Create Job from PDF'}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

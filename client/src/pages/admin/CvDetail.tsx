@@ -6,7 +6,23 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { StatusChip } from '@/components/StatusChip';
 import { ScoreBadge } from '@/components/ScoreBadge';
 import { CandidateMatrixView } from '@/components/MatrixView';
@@ -27,6 +43,7 @@ import {
   Tag,
   Send,
   Briefcase,
+  Edit,
 } from 'lucide-react';
 
 export default function CvDetail() {
@@ -39,6 +56,14 @@ export default function CvDetail() {
   const [noteContent, setNoteContent] = useState('');
   const [selectedMatch, setSelectedMatch] = useState<any>(null);
   const [newTag, setNewTag] = useState('');
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [editForm, setEditForm] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    country: '',
+    headline: '',
+  });
 
   const { data: candidate, isLoading } = useQuery({
     queryKey: ['/api/candidates', candidateId],
@@ -77,6 +102,43 @@ export default function CvDetail() {
     },
   });
 
+  const updateCandidateMutation = useMutation({
+    mutationFn: (data: { name: string; email: string; phone: string; country: string; countryCode: string; headline?: string }) =>
+      updateCandidate(candidateId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/candidates', candidateId] });
+      setIsEditDialogOpen(false);
+      toast({ title: 'Candidate updated successfully' });
+    },
+    onError: () => {
+      toast({ title: 'Failed to update candidate', variant: 'destructive' });
+    },
+  });
+
+  const handleEditClick = () => {
+    if (candidate) {
+      setEditForm({
+        name: candidate.name || '',
+        email: candidate.email || '',
+        phone: candidate.phone || '',
+        country: candidate.country || '',
+        headline: candidate.headline || '',
+      });
+      setIsEditDialogOpen(true);
+    }
+  };
+
+  const handleEditSubmit = () => {
+    updateCandidateMutation.mutate({
+      name: editForm.name,
+      email: editForm.email,
+      phone: editForm.phone,
+      country: editForm.country,
+      countryCode: editForm.country,
+      headline: editForm.headline,
+    });
+  };
+
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -112,7 +174,13 @@ export default function CvDetail() {
           <h1 className="text-2xl font-bold">{candidate.name}</h1>
           <p className="text-muted-foreground">{candidate.headline || 'Candidate Profile'}</p>
         </div>
-        <StatusChip status={candidate.cvFile?.status || 'uploaded'} />
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={handleEditClick} className="gap-2">
+            <Edit className="w-4 h-4" />
+            Edit
+          </Button>
+          <StatusChip status={candidate.cvFile?.status || 'uploaded'} />
+        </div>
       </div>
 
       {/* Profile Header */}
@@ -391,6 +459,77 @@ export default function CvDetail() {
           </div>
         )}
       </RightDrawer>
+
+      {/* Edit Dialog */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Edit Candidate</DialogTitle>
+            <DialogDescription>Update candidate information</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Name</label>
+              <Input
+                value={editForm.name}
+                onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                placeholder="Full name"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Email</label>
+              <Input
+                type="email"
+                value={editForm.email}
+                onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                placeholder="email@example.com"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Phone</label>
+              <Input
+                value={editForm.phone}
+                onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                placeholder="+1234567890"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Country</label>
+              <Select value={editForm.country} onValueChange={(v) => setEditForm({ ...editForm, country: v })}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select country" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="US">United States</SelectItem>
+                  <SelectItem value="GB">United Kingdom</SelectItem>
+                  <SelectItem value="DE">Germany</SelectItem>
+                  <SelectItem value="FR">France</SelectItem>
+                  <SelectItem value="IN">India</SelectItem>
+                  <SelectItem value="SG">Singapore</SelectItem>
+                  <SelectItem value="AU">Australia</SelectItem>
+                  <SelectItem value="MY">Malaysia</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Headline</label>
+              <Input
+                value={editForm.headline}
+                onChange={(e) => setEditForm({ ...editForm, headline: e.target.value })}
+                placeholder="Professional headline"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleEditSubmit} disabled={updateCandidateMutation.isPending}>
+              {updateCandidateMutation.isPending ? 'Saving...' : 'Save Changes'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

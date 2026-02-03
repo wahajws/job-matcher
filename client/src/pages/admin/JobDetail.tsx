@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRoute, Link } from 'wouter';
-import { getJob, getMatchesForJob, shortlistCandidate, rejectCandidate, getCandidate, addNote } from '@/api';
+import { getJob, getMatchesForJob, shortlistCandidate, rejectCandidate, getCandidate, addNote, generateJobReport, getJobReport } from '@/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -26,8 +26,10 @@ import {
   CheckCircle,
   XCircle,
   MessageSquare,
+  FileText,
+  Download,
 } from 'lucide-react';
-import type { MatchResult, Candidate } from '@/types';
+import type { MatchResult, Candidate, JobReport } from '@/types';
 import {
   Select,
   SelectContent,
@@ -35,6 +37,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 
 interface MatchWithCandidate extends MatchResult {
   candidate?: Candidate;
@@ -56,6 +66,8 @@ export default function JobDetail() {
     match: MatchWithCandidate;
   } | null>(null);
   const [noteContent, setNoteContent] = useState('');
+  const [showReport, setShowReport] = useState(false);
+  const [report, setReport] = useState<JobReport | null>(null);
 
   const { data: job, isLoading: jobLoading } = useQuery({
     queryKey: ['/api/jobs', jobId],
@@ -77,6 +89,39 @@ export default function JobDetail() {
     },
     enabled: !!jobId,
   });
+
+  const { data: existingReport } = useQuery({
+    queryKey: ['/api/jobs', jobId, 'report'],
+    queryFn: () => getJobReport(jobId),
+    enabled: !!jobId,
+    retry: false,
+  });
+
+  const generateReportMutation = useMutation({
+    mutationFn: () => generateJobReport(jobId),
+    onSuccess: (data) => {
+      setReport(data);
+      setShowReport(true);
+      queryClient.invalidateQueries({ queryKey: ['/api/jobs', jobId, 'report'] });
+      toast({ title: 'Report generated successfully' });
+    },
+    onError: (error: any) => {
+      toast({ 
+        title: 'Failed to generate report', 
+        description: error.message || 'An error occurred',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const handleViewReport = async () => {
+    if (existingReport) {
+      setReport(existingReport);
+      setShowReport(true);
+    } else {
+      generateReportMutation.mutate();
+    }
+  };
 
   const shortlistMutation = useMutation({
     mutationFn: (candidateId: string) => shortlistCandidate(jobId, candidateId),
@@ -192,9 +237,20 @@ export default function JobDetail() {
         </Link>
         <div className="flex-1">
           <h1 className="text-2xl font-bold">{job.title}</h1>
-          <p className="text-muted-foreground">{job.department}</p>
+          <p className="text-muted-foreground">
+            {job.company && `${job.company} · `}
+            {job.department}
+          </p>
         </div>
         <StatusChip status={job.status} />
+        <Button 
+          onClick={handleViewReport}
+          disabled={generateReportMutation.isPending}
+          className="gap-2"
+        >
+          <FileText className="w-4 h-4" />
+          {existingReport ? 'View Report' : 'Generate Report'}
+        </Button>
       </div>
 
       {/* Job Header Card */}
@@ -423,6 +479,155 @@ export default function JobDetail() {
           }
         }}
       />
+
+      {/* Report Dialog */}
+      <Dialog open={showReport} onOpenChange={setShowReport}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Job Report: {job.title}</DialogTitle>
+            <DialogDescription>
+              Comprehensive analysis of candidates matched to this job
+            </DialogDescription>
+          </DialogHeader>
+          
+          {report && report.reportData && (
+            <div className="space-y-6 mt-4">
+              {/* Executive Summary */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Executive Summary</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <p className="text-sm text-muted-foreground">Total Matches</p>
+                      <p className="text-2xl font-bold">{report.reportData.statistics.totalMatches}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Average Score</p>
+                      <p className="text-2xl font-bold">{report.reportData.statistics.averageScore.toFixed(1)}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Top Candidates</p>
+                      <p className="text-2xl font-bold">{report.reportData.topCandidates.length}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Statistics */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Statistics</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <h4 className="text-sm font-medium mb-2">Score Distribution</h4>
+                    <div className="space-y-2">
+                      {Object.entries(report.reportData.statistics.scoreDistribution).map(([range, count]) => (
+                        <div key={range} className="flex items-center gap-2">
+                          <span className="text-xs w-16">{range}</span>
+                          <div className="flex-1 bg-muted rounded-full h-2">
+                            <div 
+                              className="bg-primary h-2 rounded-full" 
+                              style={{ width: `${(count / report.reportData.statistics.totalMatches) * 100}%` }}
+                            />
+                          </div>
+                          <span className="text-xs w-8 text-right">{count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="text-sm font-medium mb-2">Top Skills</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {report.reportData.statistics.topSkills.slice(0, 10).map((skill) => (
+                        <Badge key={skill.skill} variant="secondary">
+                          {skill.skill} ({skill.count})
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="text-sm font-medium mb-2">Experience Distribution</h4>
+                    <div className="grid grid-cols-4 gap-2">
+                      {Object.entries(report.reportData.statistics.experienceDistribution).map(([range, count]) => (
+                        <div key={range} className="text-center p-2 bg-muted rounded">
+                          <p className="text-xs text-muted-foreground">{range} years</p>
+                          <p className="text-lg font-bold">{count}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="text-sm font-medium mb-2">Location Distribution</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(report.reportData.statistics.locationDistribution)
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, 5)
+                        .map(([country, count]) => (
+                          <Badge key={country} variant="outline">
+                            {country}: {count}
+                          </Badge>
+                        ))}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Top Candidates */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Top Candidates</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    {report.reportData.topCandidates.map((candidate, idx) => (
+                      <div key={candidate.id} className="p-4 border rounded-lg">
+                        <div className="flex items-start justify-between mb-2">
+                          <div>
+                            <p className="font-medium">{idx + 1}. {candidate.name}</p>
+                            <p className="text-sm text-muted-foreground">{candidate.email}</p>
+                          </div>
+                          <ScoreBadge score={candidate.matchScore} />
+                        </div>
+                        <p className="text-sm mt-2">{candidate.matchExplanation}</p>
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {candidate.skills.slice(0, 5).map((skill: any) => (
+                            <Badge key={skill.name || skill} variant="outline" className="text-xs">
+                              {skill.name || skill}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Recommendations */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Recommendations</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ul className="space-y-2">
+                    {report.reportData.recommendations.map((rec, idx) => (
+                      <li key={idx} className="flex items-start gap-2">
+                        <span className="text-primary mt-1">•</span>
+                        <span className="text-sm">{rec}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

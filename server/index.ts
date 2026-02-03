@@ -2,6 +2,9 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import sequelize from "./db/config.js";
+import "./db/models/index.js"; // Initialize models
+import { initializeDatabase } from "./db/init.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -12,15 +15,22 @@ declare module "http" {
   }
 }
 
-app.use(
-  express.json({
-    verify: (req, _res, buf) => {
-      req.rawBody = buf;
-    },
-  }),
-);
-
-app.use(express.urlencoded({ extended: false }));
+// CORS middleware - must come before body parsers
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  // Allow requests from same origin (Vite dev server) or configured origins
+  if (!origin || origin.includes('localhost') || origin.includes('127.0.0.1')) {
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -60,6 +70,62 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Initialize database (create DB, run migrations) if enabled via env vars
+  try {
+    await initializeDatabase();
+  } catch (error) {
+    log(`Database initialization failed: ${error}`, "error");
+    // Continue anyway - might be intentional
+  }
+
+  // Test database connection
+  try {
+    await sequelize.authenticate();
+    log("Database connection established successfully");
+  } catch (error) {
+    log(`Database connection failed: ${error}`, "error");
+  }
+
+  // Create body parsers
+  const jsonParser = express.json({
+    verify: (req, _res, buf) => {
+      req.rawBody = buf;
+    },
+  });
+
+  const urlencodedParser = express.urlencoded({ extended: false });
+
+  // Register body parsers BEFORE routes (but skip multipart for file uploads)
+  // JSON parser for application/json requests
+  app.use((req, res, next) => {
+    const contentType = req.headers['content-type'] || '';
+    // CRITICAL: Skip body parsing for multipart - multer will handle it in routes
+    if (contentType.includes('multipart/form-data')) {
+      return next();
+    }
+    // Apply JSON parser for JSON requests
+    if (contentType.includes('application/json')) {
+      return jsonParser(req, res, next);
+    }
+    next();
+  });
+
+  // URL encoded parser for form data (not multipart)
+  app.use((req, res, next) => {
+    const contentType = req.headers['content-type'] || '';
+    // CRITICAL: Skip body parsing for multipart
+    if (contentType.includes('multipart/form-data')) {
+      return next();
+    }
+    // Apply urlencoded parser for form-urlencoded requests
+    if (contentType.includes('application/x-www-form-urlencoded')) {
+      return urlencodedParser(req, res, next);
+    }
+    next();
+  });
+
+  // Register routes AFTER body parsers
+  // Multer in routes will handle multipart requests (body parsers skip them)
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
@@ -90,14 +156,13 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5000", 10);
+  const host = process.env.HOST || "localhost";
+  
   httpServer.listen(
-    {
-      port,
-      host: "0.0.0.0",
-      reusePort: true,
-    },
+    port,
+    host,
     () => {
-      log(`serving on port ${port}`);
+      log(`serving on ${host}:${port}`);
     },
   );
 })();

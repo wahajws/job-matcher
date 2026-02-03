@@ -1,0 +1,107 @@
+// API Client for making requests to the backend
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
+
+// Get auth token from localStorage
+function getAuthToken(): string | null {
+  return localStorage.getItem('auth_token');
+}
+
+// Set auth token in localStorage
+export function setAuthToken(token: string | null) {
+  if (token) {
+    localStorage.setItem('auth_token', token);
+  } else {
+    localStorage.removeItem('auth_token');
+  }
+}
+
+// Make API request
+export async function apiRequest<T = any>(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<T> {
+  const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;
+  const token = getAuthToken();
+
+  const headers: HeadersInit = {
+    'Content-Type': 'application/json',
+    ...options.headers,
+  };
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(url, {
+    ...options,
+    headers,
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: response.statusText }));
+    throw new Error(error.message || `HTTP ${response.status}`);
+  }
+
+  // Handle empty responses
+  const contentType = response.headers.get('content-type');
+  if (contentType && contentType.includes('application/json')) {
+    return response.json();
+  }
+  
+  return response.text() as any;
+}
+
+// GET request
+export async function apiGet<T = any>(endpoint: string): Promise<T> {
+  return apiRequest<T>(endpoint, { method: 'GET' });
+}
+
+// POST request
+export async function apiPost<T = any>(endpoint: string, data?: any): Promise<T> {
+  return apiRequest<T>(endpoint, {
+    method: 'POST',
+    body: data ? JSON.stringify(data) : undefined,
+  });
+}
+
+// PUT request
+export async function apiPut<T = any>(endpoint: string, data?: any): Promise<T> {
+  return apiRequest<T>(endpoint, {
+    method: 'PUT',
+    body: data ? JSON.stringify(data) : undefined,
+  });
+}
+
+// DELETE request
+export async function apiDelete<T = any>(endpoint: string): Promise<T> {
+  return apiRequest<T>(endpoint, { method: 'DELETE' });
+}
+
+// Upload files
+export async function apiUpload<T = any>(
+  endpoint: string,
+  formData: FormData
+): Promise<T> {
+  const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;
+  const token = getAuthToken();
+
+  const headers: HeadersInit = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: formData,
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: response.statusText }));
+    throw new Error(error.message || `HTTP ${response.status}`);
+  }
+
+  return response.json();
+}

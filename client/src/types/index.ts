@@ -76,12 +76,13 @@ export interface CandidateMatrix {
 // Job Types
 export type JobStatus = 'draft' | 'published' | 'closed';
 export type LocationType = 'onsite' | 'hybrid' | 'remote';
-export type SeniorityLevel = 'junior' | 'mid' | 'senior' | 'lead' | 'principal';
+export type SeniorityLevel = 'internship' | 'junior' | 'mid' | 'senior' | 'lead' | 'principal';
 
 export interface Job {
   id: string;
   title: string;
   department: string;
+  company?: string;
   locationType: LocationType;
   country: string;
   city: string;
@@ -170,4 +171,54 @@ export interface UploadResult {
   failed: number;
   duplicates: number;
   files: UploadProgress[];
+}
+
+// Job Report Types
+export interface ReportStatistics {
+  totalMatches: number;
+  averageScore: number;
+  scoreDistribution: {
+    '90-100': number;
+    '80-89': number;
+    '70-79': number;
+    '60-69': number;
+    '30-59': number;
+  };
+  topSkills: Array<{ skill: string; count: number }>;
+  experienceDistribution: {
+    '0-2': number;
+    '3-5': number;
+    '6-10': number;
+    '11+': number;
+  };
+  locationDistribution: Record<string, number>;
+  domainDistribution: Record<string, number>;
+}
+
+export interface JobReport {
+  id: string;
+  jobId: string;
+  reportData: {
+    job: Job;
+    statistics: ReportStatistics;
+    topCandidates: Array<{
+      id: string;
+      name: string;
+      email: string;
+      phone: string;
+      country: string;
+      headline?: string;
+      matchScore: number;
+      matchBreakdown: MatchBreakdown;
+      matchExplanation: string;
+      matchGaps: MatchGap[];
+      experience: number;
+      skills: SkillEntry[];
+      domains: string[];
+    }>;
+    recommendations: string[];
+  };
+  status: 'generating' | 'completed' | 'failed';
+  generatedAt: Date;
+  generatedBy?: string;
 }

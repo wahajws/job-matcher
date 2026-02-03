@@ -1,12 +1,15 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Role, User } from '@/types';
+import { login as apiLogin, logout as apiLogout, getCurrentUser } from '@/api';
+import { setAuthToken } from '@/lib/apiClient';
 
 interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
   theme: 'light' | 'dark';
   login: (name: string, email: string, role: Role) => void;
+  loginWithCredentials: (username: string, password: string) => Promise<void>;
   logout: () => void;
   switchRole: (role: Role) => void;
   toggleTheme: () => void;
@@ -20,6 +23,7 @@ export const useAuthStore = create<AuthState>()(
       isAuthenticated: false,
       theme: 'light',
       
+      // Mock login (for demo mode)
       login: (name: string, email: string, role: Role) => {
         const user: User = {
           id: crypto.randomUUID(),
@@ -30,8 +34,26 @@ export const useAuthStore = create<AuthState>()(
         set({ user, isAuthenticated: true });
       },
       
-      logout: () => {
-        set({ user: null, isAuthenticated: false });
+      // Real API login
+      loginWithCredentials: async (username: string, password: string) => {
+        try {
+          const response = await apiLogin(username, password);
+          set({ user: response.user, isAuthenticated: true });
+        } catch (error) {
+          console.error('Login failed:', error);
+          throw error;
+        }
+      },
+      
+      logout: async () => {
+        try {
+          await apiLogout();
+        } catch (error) {
+          console.error('Logout error:', error);
+        } finally {
+          setAuthToken(null);
+          set({ user: null, isAuthenticated: false });
+        }
       },
       
       switchRole: (role: Role) => {
