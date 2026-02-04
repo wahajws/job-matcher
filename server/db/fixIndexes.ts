@@ -17,7 +17,7 @@ async function fixIndexes() {
     console.log(`\nChecking indexes in database: ${dbName}\n`);
 
     // Get all indexes for the users table
-    const [indexes] = await sequelize.query(`
+    const indexes = await sequelize.query(`
       SELECT 
         INDEX_NAME,
         COLUMN_NAME,
@@ -32,19 +32,45 @@ async function fixIndexes() {
       type: QueryTypes.SELECT
     }) as any[];
 
-    console.log(`Found ${indexes.length} indexes on users table:\n`);
+    if (!Array.isArray(indexes)) {
+      console.error('❌ Unexpected query result format');
+      console.error('Result:', indexes);
+      await sequelize.close();
+      process.exit(1);
+    }
+
+    if (indexes.length === 0) {
+      console.log('✓ No indexes found on users table (table might not exist)');
+      await sequelize.close();
+      process.exit(0);
+    }
+
+    console.log(`Found ${indexes.length} index entries on users table\n`);
     
+    // Group indexes by name
     const indexGroups: Record<string, any[]> = {};
     indexes.forEach((idx: any) => {
-      if (!indexGroups[idx.INDEX_NAME]) {
-        indexGroups[idx.INDEX_NAME] = [];
+      const indexName = idx.INDEX_NAME || 'UNNAMED';
+      if (!indexGroups[indexName]) {
+        indexGroups[indexName] = [];
       }
-      indexGroups[idx.INDEX_NAME].push(idx);
+      indexGroups[indexName].push(idx);
     });
+
+    const indexNames = Object.keys(indexGroups);
+    console.log(`Total unique indexes: ${indexNames.length}\n`);
+    
+    // Show all indexes
+    console.log('Current indexes:');
+    indexNames.forEach(name => {
+      const cols = indexGroups[name].map((x: any) => x.COLUMN_NAME).join(', ');
+      const unique = indexGroups[name][0].NON_UNIQUE === 0 ? 'UNIQUE' : 'INDEX';
+      console.log(`  - ${name} (${unique}): [${cols}]`);
+    });
+    console.log('');
 
     // Find duplicate indexes (same columns, different names)
     const duplicates: string[] = [];
-    const indexNames = Object.keys(indexGroups);
     
     for (let i = 0; i < indexNames.length; i++) {
       for (let j = i + 1; j < indexNames.length; j++) {
