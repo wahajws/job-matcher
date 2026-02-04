@@ -5,16 +5,22 @@
 ### 1. Fix Port 5000 Already in Use
 
 ```bash
+# Pull latest code (includes port helper script)
+git pull origin main
+
 # Stop all PM2 processes
-pm2 stop all
 pm2 delete all
 
-# Check if anything else is using port 5000
-sudo lsof -i :5000
-# If you see a process, kill it:
-sudo kill -9 <PID>
+# Check what's using port 5000
+npm run port:check
 
-# Verify nothing is running
+# Kill processes using port 5000 (if any found)
+npm run port:kill
+
+# Verify port is free
+npm run port:check
+
+# Verify PM2 is clean
 pm2 list
 ```
 

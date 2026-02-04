@@ -30,7 +30,9 @@
     "pm2:logs": "pm2 logs asset-manager",
     "pm2:monit": "pm2 monit",
     "pm2:save": "pm2 save",
-    "pm2:startup": "pm2 startup"
+    "pm2:startup": "pm2 startup",
+    "port:check": "bash script/findPort.sh 5000",
+    "port:kill": "bash script/findPort.sh 5000 kill"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

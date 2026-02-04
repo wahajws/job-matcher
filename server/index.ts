@@ -164,5 +164,16 @@ app.use((req, res, next) => {
     () => {
       log(`serving on ${host}:${port}`);
     },
-  );
+  ).on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      log(`❌ Port ${port} is already in use. Please:`, "error");
+      log(`   1. Stop other processes using port ${port}`, "error");
+      log(`   2. Or change PORT in .env file`, "error");
+      log(`   3. Check with: lsof -i :${port} or netstat -tulpn | grep ${port}`, "error");
+      process.exit(1);
+    } else {
+      log(`Server error: ${err.message}`, "error");
+      process.exit(1);
+    }
+  });
 })();

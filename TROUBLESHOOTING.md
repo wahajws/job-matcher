@@ -65,11 +65,32 @@ Error: listen EADDRINUSE: address already in use 127.0.0.1:5000
 **Cause:**
 Another process is already using port 5000, or PM2 is trying to start multiple instances.
 
-**Solutions:**
+**Quick Fix (Recommended):**
+
+```bash
+# 1. Stop all PM2 processes
+pm2 delete all
+
+# 2. Check and kill any process using port 5000
+npm run port:check
+# If processes found, kill them:
+npm run port:kill
+
+# 3. Verify nothing is using the port
+npm run port:check
+
+# 4. Start fresh
+npm run pm2:start:dev
+```
+
+**Detailed Solutions:**
 
 #### Step 1: Check What's Using Port 5000
 ```bash
-# Linux
+# Use the helper script
+npm run port:check
+
+# Or manually (Linux)
 sudo lsof -i :5000
 # Or
 sudo netstat -tulpn | grep 5000
@@ -83,7 +104,7 @@ sudo kill -9 <PID>
 # Stop all PM2 processes
 pm2 stop all
 
-# Delete all PM2 processes
+# Delete all PM2 processes (recommended for clean start)
 pm2 delete all
 
 # Or stop/delete specific app
@@ -100,7 +121,16 @@ pm2 list
 pm2 delete <app-name>:<id>
 ```
 
-#### Step 4: Change Port (Alternative)
+#### Step 4: Kill Processes Using Port (Automated)
+```bash
+# Use the helper script to automatically find and kill
+npm run port:kill
+
+# Or manually kill specific PID
+sudo kill -9 <PID>
+```
+
+#### Step 5: Change Port (Alternative)
 If you can't free port 5000, change it in your `.env`:
 ```env
 PORT=3000
@@ -111,15 +141,18 @@ Then restart:
 pm2 restart asset-manager
 ```
 
-#### Step 5: Restart Cleanly
+#### Step 6: Restart Cleanly
 ```bash
 # Make sure no processes are running
 pm2 list
+npm run port:check
 
-# Start fresh
-npm run pm2:start:dev
-# Or for production
-npm run pm2:start
+# Start fresh (only ONE of these)
+npm run pm2:start:dev    # For development
+# OR
+npm run pm2:start        # For production
+
+# Don't run both at the same time!
 ```
 
 ---
