@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { Op } from 'sequelize';
+import sequelize from '../db/config.js';
 import { Candidate, CvFile, CandidateMatrix, CandidateTag } from '../db/models/index.js';
 import { BaseController } from '../db/base/BaseController.js';
 import { upload } from '../middleware/upload.js';
@@ -445,10 +446,13 @@ export class CandidateController extends BaseController {
           
           if (candidateEmail && candidateEmail !== '' && candidateEmail.includes('@')) {
             console.log(`[Upload] → Step 7: Checking for duplicate email: ${candidateEmail}...`);
+            // Use MySQL-compatible case-insensitive comparison
+            // LOWER() function works in both MySQL and PostgreSQL
             const existingCandidate = await Candidate.findOne({ 
-              where: { 
-                email: { [Op.iLike]: candidateEmail }
-              } 
+              where: sequelize.where(
+                sequelize.fn('LOWER', sequelize.col('email')),
+                candidateEmail
+              )
             });
             
             if (existingCandidate) {
