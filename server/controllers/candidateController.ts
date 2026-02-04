@@ -12,6 +12,72 @@ import { pdfParserService } from '../services/pdfParser.js';
 export class CandidateController extends BaseController {
   protected model = Candidate;
 
+  /**
+   * Check if a name looks invalid (hash, too short, no letters, etc.)
+   */
+  private isInvalidName(name: string): boolean {
+    if (!name || name.length < 2) return true;
+    
+    // Check if it looks like a hash (long alphanumeric string without spaces)
+    if (name.length > 30 && /^[a-f0-9]+$/i.test(name.replace(/\s/g, ''))) {
+      return true; // Looks like a hash
+    }
+    
+    // Check if it has very few letters (mostly numbers/special chars)
+    const letterCount = (name.match(/[a-zA-Z]/g) || []).length;
+    if (letterCount < 2) {
+      return true; // Not enough letters to be a real name
+    }
+    
+    // Check if it's mostly special characters or numbers
+    const specialCharCount = (name.match(/[^a-zA-Z0-9\s]/g) || []).length;
+    if (specialCharCount > name.length * 0.5) {
+      return true; // Too many special characters
+    }
+    
+    return false;
+  }
+
+  /**
+   * Extract name directly from CV text as fallback
+   * Looks for the largest/most prominent text at the beginning
+   */
+  private extractNameFromText(cvText: string): string | null {
+    if (!cvText || cvText.trim().length === 0) return null;
+    
+    // Get first 2000 characters (where name usually is)
+    const headerText = cvText.substring(0, 2000);
+    
+    // Split into lines and find the most likely name line
+    const lines = headerText.split(/\n+/).map(line => line.trim()).filter(line => line.length > 0);
+    
+    // Look for lines that:
+    // 1. Are in the first 10 lines
+    // 2. Have 2-4 words (typical name format)
+    // 3. Start with capital letter
+    // 4. Don't contain common CV keywords
+    const nameKeywords = ['email', 'phone', 'address', 'resume', 'cv', 'experience', 'education', 'skills', 'objective'];
+    
+    for (let i = 0; i < Math.min(10, lines.length); i++) {
+      const line = lines[i];
+      const words = line.split(/\s+/);
+      
+      // Check if line looks like a name (2-4 words, starts with capital, no keywords)
+      if (words.length >= 2 && words.length <= 4) {
+        const hasKeywords = nameKeywords.some(keyword => line.toLowerCase().includes(keyword));
+        const startsWithCapital = /^[A-Z]/.test(line);
+        const hasEnoughLetters = (line.match(/[a-zA-Z]/g) || []).length >= 4;
+        
+        if (!hasKeywords && startsWithCapital && hasEnoughLetters) {
+          // This looks like a name
+          return line;
+        }
+      }
+    }
+    
+    return null;
+  }
+
   async list(req: Request, res: Response) {
     await this.handleRequest(req, res, async () => {
       const { status, country, search, tags, minScore, sortBy } = req.query;
@@ -307,8 +373,10 @@ export class CandidateController extends BaseController {
           // Extract text from PDF and get candidate info using Qwen FIRST
           // This is needed to check for duplicate email addresses
           let candidateInfo;
+          let cvText: string | null = null;
+          
           try {
-            const cvText = await pdfParserService.extractText(absoluteFilePath);
+            cvText = await pdfParserService.extractText(absoluteFilePath);
             
             if (!cvText || cvText.trim().length === 0) {
               throw new Error('PDF text extraction returned empty content');
@@ -316,18 +384,25 @@ export class CandidateController extends BaseController {
             
             candidateInfo = await qwenService.extractCandidateInfo(cvText);
           } catch (error: any) {
-            console.error(`[Upload] Failed to extract candidate info from ${file.originalname}, using filename fallback:`, error.message);
-            // Fallback: extract name from filename
-            const nameParts = file.originalname.replace('.pdf', '').replace(/_/g, ' ').replace(/-/g, ' ').split(' ');
-            const fallbackName = nameParts.slice(0, 2).join(' ') || 'Unknown';
-            candidateInfo = {
-              name: fallbackName,
-              email: undefined,
-              phone: undefined,
-              country: 'US',
-              countryCode: 'US',
-              headline: undefined,
-            };
+            console.error(`[Upload] Failed to extract candidate info from ${file.originalname}:`, error.message);
+            // DO NOT use filename as fallback - reject the upload if we can't extract info
+            throw new Error(`Failed to extract candidate information from CV. Please ensure the CV contains readable text and a valid name. Error: ${error.message}`);
+          }
+
+          // Validate extracted name - must be a real name, not a hash or invalid value
+          const extractedName = candidateInfo.name?.trim();
+          if (!extractedName || 
+              extractedName === 'Unknown' || 
+              extractedName.length < 2 ||
+              this.isInvalidName(extractedName)) {
+            // Try to extract name directly from CV text as a last resort
+            const directName = this.extractNameFromText(cvText || '');
+            if (directName && !this.isInvalidName(directName)) {
+              console.log(`[Upload] Using directly extracted name: ${directName} (Qwen returned: ${extractedName})`);
+              candidateInfo.name = directName;
+            } else {
+              throw new Error(`Could not extract a valid candidate name from the CV. Please ensure the CV contains a readable name at the top of the document.`);
+            }
           }
 
           // Check for duplicate by email address (normalized to lowercase)

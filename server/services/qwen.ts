@@ -17,6 +17,72 @@ export class QwenService {
   private model: string;
   private maxRetries: number = 3;
 
+  /**
+   * Check if a name looks invalid (hash, too short, no letters, etc.)
+   */
+  private isInvalidName(name: string): boolean {
+    if (!name || name.length < 2) return true;
+    
+    // Check if it looks like a hash (long alphanumeric string without spaces)
+    if (name.length > 30 && /^[a-f0-9]+$/i.test(name.replace(/\s/g, ''))) {
+      return true; // Looks like a hash
+    }
+    
+    // Check if it has very few letters (mostly numbers/special chars)
+    const letterCount = (name.match(/[a-zA-Z]/g) || []).length;
+    if (letterCount < 2) {
+      return true; // Not enough letters to be a real name
+    }
+    
+    // Check if it's mostly special characters or numbers
+    const specialCharCount = (name.match(/[^a-zA-Z0-9\s]/g) || []).length;
+    if (specialCharCount > name.length * 0.5) {
+      return true; // Too many special characters
+    }
+    
+    return false;
+  }
+
+  /**
+   * Extract name directly from CV text as fallback
+   * Looks for the largest/most prominent text at the beginning
+   */
+  private extractNameFromText(cvText: string): string | null {
+    if (!cvText || cvText.trim().length === 0) return null;
+    
+    // Get first 2000 characters (where name usually is)
+    const headerText = cvText.substring(0, 2000);
+    
+    // Split into lines and find the most likely name line
+    const lines = headerText.split(/\n+/).map(line => line.trim()).filter(line => line.length > 0);
+    
+    // Look for lines that:
+    // 1. Are in the first 10 lines
+    // 2. Have 2-4 words (typical name format)
+    // 3. Start with capital letter
+    // 4. Don't contain common CV keywords
+    const nameKeywords = ['email', 'phone', 'address', 'resume', 'cv', 'experience', 'education', 'skills', 'objective'];
+    
+    for (let i = 0; i < Math.min(10, lines.length); i++) {
+      const line = lines[i];
+      const words = line.split(/\s+/);
+      
+      // Check if line looks like a name (2-4 words, starts with capital, no keywords)
+      if (words.length >= 2 && words.length <= 4) {
+        const hasKeywords = nameKeywords.some(keyword => line.toLowerCase().includes(keyword));
+        const startsWithCapital = /^[A-Z]/.test(line);
+        const hasEnoughLetters = (line.match(/[a-zA-Z]/g) || []).length >= 4;
+        
+        if (!hasKeywords && startsWithCapital && hasEnoughLetters) {
+          // This looks like a name
+          return line;
+        }
+      }
+    }
+    
+    return null;
+  }
+
   constructor() {
     this.apiKey = process.env.ALIBABA_LLM_API_KEY || '';
     this.apiUrl = process.env.ALIBABA_LLM_API_BASE_URL || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
@@ -179,9 +245,16 @@ Return a JSON object with this exact structure:
   "headline": "Senior Software Engineer"
 }
 
+CRITICAL RULES FOR NAME EXTRACTION:
+- The name MUST be extracted from the CV content itself, NEVER from the filename
+- Look at the very top of the CV - the candidate's name is usually the largest, most prominent text
+- The name should be a real person's name (2-4 words typically, containing letters)
+- DO NOT use hash-like strings, file paths, or random alphanumeric sequences as names
+- If the name looks like a hash (long string of letters/numbers), it's WRONG - look harder in the CV
+- The name should start with a capital letter and contain proper name-like words
+- If you truly cannot find a valid name in the CV content, return "Unknown" (but this should be rare)
+
 IMPORTANT:
-- The name should be the actual person's name from the CV, NOT from the filename
-- If you cannot find the name, look at the very top of the CV - it's usually the largest text
 - headline: Extract the candidate's current or desired role/title. If the CV mentions "seeking Data Analyst Intern position" or similar, include "Intern" in the headline
 - If any field is not found in the CV, use null for that field (except name - try harder to find it)
 - Return ONLY valid JSON, no additional text or markdown formatting
@@ -211,9 +284,27 @@ Return ONLY valid JSON, no additional text.`;
       
       console.log(`[Qwen] Parsed candidate info:`, parsed);
       
-      // Ensure name is always provided, fallback to "Unknown" if not found
+      // Validate and clean the extracted name
+      let extractedName = parsed.name?.trim() || '';
+      
+      // Validate name - reject if it looks like a hash or invalid
+      if (!extractedName || 
+          extractedName === 'Unknown' ||
+          extractedName.length < 2 ||
+          this.isInvalidName(extractedName)) {
+        console.warn(`[Qwen] WARNING: Extracted name "${extractedName}" appears invalid. First 500 chars: ${cvTextToUse.substring(0, 500)}`);
+        // Try to extract name directly from text
+        const directName = this.extractNameFromText(cvTextToUse);
+        if (directName && !this.isInvalidName(directName)) {
+          console.log(`[Qwen] Using directly extracted name: ${directName}`);
+          extractedName = directName;
+        } else {
+          extractedName = 'Unknown';
+        }
+      }
+      
       const result = {
-        name: parsed.name || 'Unknown',
+        name: extractedName,
         email: parsed.email || undefined,
         phone: parsed.phone || undefined,
         country: parsed.country || 'US',
@@ -223,7 +314,7 @@ Return ONLY valid JSON, no additional text.`;
       
       // If name is still "Unknown", log a warning
       if (result.name === 'Unknown') {
-        console.warn(`[Qwen] WARNING: Could not extract name from CV. First 500 chars: ${cvTextToUse.substring(0, 500)}`);
+        console.warn(`[Qwen] WARNING: Could not extract valid name from CV. First 500 chars: ${cvTextToUse.substring(0, 500)}`);
       }
       
       console.log(`[Qwen] Final extracted info:`, result);
