@@ -345,51 +345,82 @@ export class CandidateController extends BaseController {
       
       // Helper function to process a single file
       const processFile = async (file: Express.Multer.File): Promise<any> => {
+        const startTime = Date.now();
+        const fileName = file.originalname;
+        let failureReason = '';
+        let failureStep = '';
+        
         try {
-          // Validate file was saved correctly by multer (diskStorage)
+          console.log(`\n[Upload] ========================================`);
+          console.log(`[Upload] Starting processing: ${fileName}`);
+          console.log(`[Upload] File size: ${file.size} bytes`);
+          
+          // Step 1: Validate file path
+          failureStep = 'File Path Validation';
           if (!file.path) {
-            throw new Error('File path not provided by multer');
+            failureReason = 'File path not provided by multer';
+            throw new Error(failureReason);
           }
+          console.log(`[Upload] ✓ Step 1: File path validated: ${file.path}`);
 
-          // Check if file exists on disk and get actual size
+          // Step 2: Check if file exists on disk
+          failureStep = 'File Existence Check';
           const absoluteFilePath = path.isAbsolute(file.path) ? file.path : path.resolve(file.path);
           
           if (!existsSync(absoluteFilePath)) {
-            throw new Error(`File was not saved to disk at: ${absoluteFilePath}`);
+            failureReason = `File was not saved to disk at: ${absoluteFilePath}`;
+            throw new Error(failureReason);
           }
+          console.log(`[Upload] ✓ Step 2: File exists on disk`);
 
+          // Step 3: Validate file size
+          failureStep = 'File Size Validation';
           const stats = statSync(absoluteFilePath);
           const actualFileSize = stats.size;
 
           if (actualFileSize === 0) {
-            throw new Error(`File on disk is 0 bytes. Multer reported size: ${file.size}, Actual size: ${actualFileSize}`);
+            failureReason = `File on disk is 0 bytes. Multer reported size: ${file.size}, Actual size: ${actualFileSize}`;
+            throw new Error(failureReason);
           }
+          console.log(`[Upload] ✓ Step 3: File size validated: ${actualFileSize} bytes`);
 
           // Use actual file size from disk
           const fileSizeToStore = actualFileSize > 0 ? actualFileSize : file.size;
 
-          console.log(`[Upload] Processing file: ${file.originalname}`);
-
-          // Extract text from PDF and get candidate info using Qwen FIRST
-          // This is needed to check for duplicate email addresses
+          // Step 4: Extract text from PDF
+          failureStep = 'PDF Text Extraction';
           let candidateInfo;
           let cvText: string | null = null;
           
           try {
+            console.log(`[Upload] → Step 4: Extracting text from PDF...`);
             cvText = await pdfParserService.extractText(absoluteFilePath);
             
             if (!cvText || cvText.trim().length === 0) {
-              throw new Error('PDF text extraction returned empty content');
+              failureReason = 'PDF text extraction returned empty content - PDF may be corrupted, password-protected, or image-based';
+              throw new Error(failureReason);
             }
-            
-            candidateInfo = await qwenService.extractCandidateInfo(cvText);
+            console.log(`[Upload] ✓ Step 4: Extracted ${cvText.length} characters from PDF`);
           } catch (error: any) {
-            console.error(`[Upload] Failed to extract candidate info from ${file.originalname}:`, error.message);
-            // DO NOT use filename as fallback - reject the upload if we can't extract info
-            throw new Error(`Failed to extract candidate information from CV. Please ensure the CV contains readable text and a valid name. Error: ${error.message}`);
+            failureReason = `PDF text extraction failed: ${error.message}`;
+            console.error(`[Upload] ✗ Step 4 FAILED: ${failureReason}`);
+            throw new Error(`Failed to extract text from PDF. ${failureReason}`);
           }
 
-          // Validate extracted name - must be a real name, not a hash or invalid value
+          // Step 5: Extract candidate info using Qwen
+          failureStep = 'Candidate Info Extraction (Qwen)';
+          try {
+            console.log(`[Upload] → Step 5: Extracting candidate info using Qwen AI...`);
+            candidateInfo = await qwenService.extractCandidateInfo(cvText);
+            console.log(`[Upload] ✓ Step 5: Extracted info - Name: "${candidateInfo.name}", Email: "${candidateInfo.email || 'N/A'}"`);
+          } catch (error: any) {
+            failureReason = `Qwen AI extraction failed: ${error.message}`;
+            console.error(`[Upload] ✗ Step 5 FAILED: ${failureReason}`);
+            throw new Error(`Failed to extract candidate information from CV using AI. ${failureReason}`);
+          }
+
+          // Step 6: Validate extracted name
+          failureStep = 'Name Validation';
           const extractedName = candidateInfo.name?.trim();
           if (!extractedName || 
               extractedName === 'Unknown' || 
@@ -398,46 +429,53 @@ export class CandidateController extends BaseController {
             // Try to extract name directly from CV text as a last resort
             const directName = this.extractNameFromText(cvText || '');
             if (directName && !this.isInvalidName(directName)) {
-              console.log(`[Upload] Using directly extracted name: ${directName} (Qwen returned: ${extractedName})`);
+              console.log(`[Upload] → Step 6: Using directly extracted name: "${directName}" (Qwen returned: "${extractedName}")`);
               candidateInfo.name = directName;
             } else {
-              throw new Error(`Could not extract a valid candidate name from the CV. Please ensure the CV contains a readable name at the top of the document.`);
+              failureReason = `Invalid name extracted: "${extractedName}". Name must be a real person's name (not a hash, filename, or invalid value)`;
+              console.error(`[Upload] ✗ Step 6 FAILED: ${failureReason}`);
+              throw new Error(failureReason);
             }
           }
+          console.log(`[Upload] ✓ Step 6: Name validated: "${candidateInfo.name}"`);
 
-          // Check for duplicate by email address (normalized to lowercase)
+          // Step 7: Check for duplicate email
+          failureStep = 'Duplicate Email Check';
           const candidateEmail = candidateInfo.email?.toLowerCase().trim();
           
           if (candidateEmail && candidateEmail !== '' && candidateEmail.includes('@')) {
-            // Valid email found - check for duplicate
+            console.log(`[Upload] → Step 7: Checking for duplicate email: ${candidateEmail}...`);
             const existingCandidate = await Candidate.findOne({ 
               where: { 
-                email: { [Op.iLike]: candidateEmail } // Case-insensitive search
+                email: { [Op.iLike]: candidateEmail }
               } 
             });
             
             if (existingCandidate) {
-              console.log(`[Upload] Duplicate email detected: ${candidateEmail} for file ${file.originalname}`);
+              failureReason = `Duplicate email detected: ${candidateEmail} (candidate already exists: ${existingCandidate.name})`;
+              console.log(`[Upload] ✗ Step 7: ${failureReason}`);
               return {
-                filename: file.originalname,
+                filename: fileName,
                 progress: 100,
                 status: 'duplicate',
-                error: `Candidate with email ${candidateEmail} already exists`,
+                error: failureReason,
+                failureStep: failureStep,
               };
             }
+            console.log(`[Upload] ✓ Step 7: No duplicate email found`);
           } else {
-            // No valid email found - log warning but allow upload
-            console.warn(`[Upload] No valid email found in CV ${file.originalname}. Cannot verify duplicates by email.`);
+            console.warn(`[Upload] ⚠ Step 7: No valid email found in CV. Cannot verify duplicates by email.`);
           }
 
-          // Create candidate with extracted info from Qwen
-          // If email is missing, generate a placeholder (but this won't prevent duplicates)
+          // Step 8: Create candidate record
+          failureStep = 'Database - Create Candidate';
           const finalEmail = candidateEmail && candidateEmail.includes('@') 
             ? candidateEmail 
             : `${candidateInfo.name.toLowerCase().replace(/\s+/g, '.')}@example.com`;
           
           let candidate;
           try {
+            console.log(`[Upload] → Step 8: Creating candidate record in database...`);
             candidate = await Candidate.create({
               id: randomUUID(),
               name: candidateInfo.name,
@@ -447,50 +485,81 @@ export class CandidateController extends BaseController {
               country_code: candidateInfo.countryCode || 'US',
               headline: candidateInfo.headline,
             });
+            console.log(`[Upload] ✓ Step 8: Candidate created with ID: ${candidate.id}`);
           } catch (dbError: any) {
             // Handle race condition: if another process created candidate with same email
             if (dbError.name === 'SequelizeUniqueConstraintError' || 
                 dbError.message?.includes('duplicate') || 
                 dbError.message?.includes('unique')) {
-              console.log(`[Upload] Duplicate email detected during creation (race condition): ${finalEmail} for file ${file.originalname}`);
+              failureReason = `Duplicate email detected during creation (race condition): ${finalEmail}`;
+              console.log(`[Upload] ✗ Step 8: ${failureReason}`);
               return {
-                filename: file.originalname,
+                filename: fileName,
                 progress: 100,
                 status: 'duplicate',
-                error: `Candidate with email ${finalEmail} already exists`,
+                error: failureReason,
+                failureStep: failureStep,
               };
             }
-            throw dbError; // Re-throw if it's a different error
+            failureReason = `Database error creating candidate: ${dbError.message}`;
+            console.error(`[Upload] ✗ Step 8 FAILED: ${failureReason}`);
+            throw dbError;
           }
 
-          // Create CV file record with candidate ID
-          const cvFile = await CvFile.create({
-            id: randomUUID(),
-            candidate_id: candidate.id,
-            filename: file.originalname,
-            file_path: absoluteFilePath,
-            file_size: fileSizeToStore,
-            status: 'uploaded',
-            batch_tag: batchTag,
-          });
+          // Step 9: Create CV file record
+          failureStep = 'Database - Create CV File';
+          try {
+            console.log(`[Upload] → Step 9: Creating CV file record...`);
+            const cvFile = await CvFile.create({
+              id: randomUUID(),
+              candidate_id: candidate.id,
+              filename: fileName,
+              file_path: absoluteFilePath,
+              file_size: fileSizeToStore,
+              status: 'uploaded',
+              batch_tag: batchTag,
+            });
+            console.log(`[Upload] ✓ Step 9: CV file created with ID: ${cvFile.id}`);
 
-          // Trigger async processing for matrix generation (in background)
-          this.processCvAsync(cvFile.id).catch((err) => {
-            console.error(`[Upload] Background processing failed for ${file.originalname}:`, err);
-          });
+            // Trigger async processing for matrix generation (in background)
+            this.processCvAsync(cvFile.id).catch((err) => {
+              console.error(`[Upload] Background processing failed for ${fileName}:`, err);
+            });
 
-          return {
-            filename: file.originalname,
-            progress: 100,
-            status: 'success',
-          };
+            const duration = Date.now() - startTime;
+            console.log(`[Upload] ✓ SUCCESS: ${fileName} processed in ${duration}ms`);
+            console.log(`[Upload] ========================================\n`);
+
+            return {
+              filename: fileName,
+              progress: 100,
+              status: 'success',
+            };
+          } catch (dbError: any) {
+            failureReason = `Database error creating CV file: ${dbError.message}`;
+            console.error(`[Upload] ✗ Step 9 FAILED: ${failureReason}`);
+            throw dbError;
+          }
         } catch (error: any) {
-          console.error(`[Upload] Error processing ${file.originalname}:`, error.message);
+          const duration = Date.now() - startTime;
+          const errorMessage = error.message || 'Unknown error';
+          failureReason = failureReason || errorMessage;
+          
+          console.error(`[Upload] ✗ FAILED: ${fileName}`);
+          console.error(`[Upload]   Failure Step: ${failureStep}`);
+          console.error(`[Upload]   Error: ${failureReason}`);
+          console.error(`[Upload]   Duration: ${duration}ms`);
+          if (error.stack) {
+            console.error(`[Upload]   Stack: ${error.stack.substring(0, 500)}`);
+          }
+          console.log(`[Upload] ========================================\n`);
+          
           return {
-            filename: file.originalname,
+            filename: fileName,
             progress: 100,
             status: 'failed',
-            error: error.message || 'Upload failed',
+            error: failureReason,
+            failureStep: failureStep,
           };
         }
       };
@@ -531,7 +600,67 @@ export class CandidateController extends BaseController {
         });
       }
 
-      console.log(`[Upload] Completed: ${result.successful} successful, ${result.duplicates} duplicates, ${result.failed} failed`);
+      console.log(`\n[Upload] ========================================`);
+      console.log(`[Upload] UPLOAD SUMMARY`);
+      console.log(`[Upload] ========================================`);
+      console.log(`[Upload] Total files processed: ${files.length}`);
+      console.log(`[Upload] Successful: ${result.successful}`);
+      console.log(`[Upload] Duplicates: ${result.duplicates}`);
+      console.log(`[Upload] Failed: ${result.failed}`);
+      console.log(`[Upload] ========================================\n`);
+
+      // Group failures by error type for better analysis
+      const failedFiles = result.files.filter(f => f.status === 'failed');
+      if (failedFiles.length > 0) {
+        console.log(`\n[Upload] ========================================`);
+        console.log(`[Upload] FAILURE ANALYSIS (${failedFiles.length} failed files)`);
+        console.log(`[Upload] ========================================`);
+        
+        // Group by error message
+        const errorGroups: Record<string, string[]> = {};
+        failedFiles.forEach(file => {
+          const errorKey = file.error || 'Unknown error';
+          if (!errorGroups[errorKey]) {
+            errorGroups[errorKey] = [];
+          }
+          errorGroups[errorKey].push(file.filename);
+        });
+
+        // Print grouped errors
+        Object.entries(errorGroups).forEach(([error, filenames]) => {
+          console.log(`\n[Upload] Error: ${error}`);
+          console.log(`[Upload]   Count: ${filenames.length} file(s)`);
+          console.log(`[Upload]   Files:`);
+          filenames.forEach(filename => {
+            console.log(`[Upload]     - ${filename}`);
+          });
+        });
+
+        // Print detailed failure list
+        console.log(`\n[Upload] ========================================`);
+        console.log(`[Upload] DETAILED FAILURE LIST`);
+        console.log(`[Upload] ========================================`);
+        failedFiles.forEach((file, index) => {
+          console.log(`\n[Upload] ${index + 1}. ${file.filename}`);
+          console.log(`[Upload]    Status: ${file.status}`);
+          console.log(`[Upload]    Failure Step: ${file.failureStep || 'Unknown'}`);
+          console.log(`[Upload]    Error: ${file.error || 'No error message'}`);
+        });
+        console.log(`[Upload] ========================================\n`);
+      }
+
+      // Group duplicates
+      const duplicateFiles = result.files.filter(f => f.status === 'duplicate');
+      if (duplicateFiles.length > 0) {
+        console.log(`\n[Upload] ========================================`);
+        console.log(`[Upload] DUPLICATE FILES (${duplicateFiles.length} files)`);
+        console.log(`[Upload] ========================================`);
+        duplicateFiles.forEach((file, index) => {
+          console.log(`[Upload] ${index + 1}. ${file.filename}`);
+          console.log(`[Upload]    Reason: ${file.error || 'Duplicate email'}`);
+        });
+        console.log(`[Upload] ========================================\n`);
+      }
 
       return result;
     });
