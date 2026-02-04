@@ -302,20 +302,10 @@ export class CandidateController extends BaseController {
           // Use actual file size from disk
           const fileSizeToStore = actualFileSize > 0 ? actualFileSize : file.size;
 
-          // Check for duplicate filename
-          const existing = await CvFile.findOne({ where: { filename: file.originalname } });
-          if (existing) {
-            return {
-              filename: file.originalname,
-              progress: 100,
-              status: 'duplicate',
-              error: 'File already exists',
-            };
-          }
-
           console.log(`[Upload] Processing file: ${file.originalname}`);
 
-          // Extract text from PDF and get candidate info using Qwen
+          // Extract text from PDF and get candidate info using Qwen FIRST
+          // This is needed to check for duplicate email addresses
           let candidateInfo;
           try {
             const cvText = await pdfParserService.extractText(absoluteFilePath);
@@ -340,16 +330,63 @@ export class CandidateController extends BaseController {
             };
           }
 
+          // Check for duplicate by email address (normalized to lowercase)
+          const candidateEmail = candidateInfo.email?.toLowerCase().trim();
+          
+          if (candidateEmail && candidateEmail !== '' && candidateEmail.includes('@')) {
+            // Valid email found - check for duplicate
+            const existingCandidate = await Candidate.findOne({ 
+              where: { 
+                email: { [Op.iLike]: candidateEmail } // Case-insensitive search
+              } 
+            });
+            
+            if (existingCandidate) {
+              console.log(`[Upload] Duplicate email detected: ${candidateEmail} for file ${file.originalname}`);
+              return {
+                filename: file.originalname,
+                progress: 100,
+                status: 'duplicate',
+                error: `Candidate with email ${candidateEmail} already exists`,
+              };
+            }
+          } else {
+            // No valid email found - log warning but allow upload
+            console.warn(`[Upload] No valid email found in CV ${file.originalname}. Cannot verify duplicates by email.`);
+          }
+
           // Create candidate with extracted info from Qwen
-          const candidate = await Candidate.create({
-            id: randomUUID(),
-            name: candidateInfo.name,
-            email: candidateInfo.email || `${candidateInfo.name.toLowerCase().replace(/\s+/g, '.')}@example.com`,
-            phone: candidateInfo.phone || '+1' + Math.floor(Math.random() * 9000000000 + 1000000000),
-            country: candidateInfo.country || 'US',
-            country_code: candidateInfo.countryCode || 'US',
-            headline: candidateInfo.headline,
-          });
+          // If email is missing, generate a placeholder (but this won't prevent duplicates)
+          const finalEmail = candidateEmail && candidateEmail.includes('@') 
+            ? candidateEmail 
+            : `${candidateInfo.name.toLowerCase().replace(/\s+/g, '.')}@example.com`;
+          
+          let candidate;
+          try {
+            candidate = await Candidate.create({
+              id: randomUUID(),
+              name: candidateInfo.name,
+              email: finalEmail,
+              phone: candidateInfo.phone || '+1' + Math.floor(Math.random() * 9000000000 + 1000000000),
+              country: candidateInfo.country || 'US',
+              country_code: candidateInfo.countryCode || 'US',
+              headline: candidateInfo.headline,
+            });
+          } catch (dbError: any) {
+            // Handle race condition: if another process created candidate with same email
+            if (dbError.name === 'SequelizeUniqueConstraintError' || 
+                dbError.message?.includes('duplicate') || 
+                dbError.message?.includes('unique')) {
+              console.log(`[Upload] Duplicate email detected during creation (race condition): ${finalEmail} for file ${file.originalname}`);
+              return {
+                filename: file.originalname,
+                progress: 100,
+                status: 'duplicate',
+                error: `Candidate with email ${finalEmail} already exists`,
+              };
+            }
+            throw dbError; // Re-throw if it's a different error
+          }
 
           // Create CV file record with candidate ID
           const cvFile = await CvFile.create({
