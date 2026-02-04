@@ -12,6 +12,7 @@
     "db:push": "drizzle-kit push",
     "db:create": "tsx server/db/createDatabase.ts",
     "db:migrate": "tsx server/db/migrate.ts",
+    "db:fix-indexes": "tsx server/db/fixIndexes.ts",
     "db:verify": "tsx server/db/verify.ts",
     "db:seed": "tsx server/db/seed.ts",
     "db:clear-cvs": "tsx server/db/clearCvs.ts",
