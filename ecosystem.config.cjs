@@ -8,14 +8,17 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: 5000,
+        HOST: '0.0.0.0', // Listen on all interfaces
       },
       env_production: {
         NODE_ENV: 'production',
         PORT: 5000,
+        HOST: '0.0.0.0', // Listen on all interfaces
       },
       env_development: {
         NODE_ENV: 'development',
         PORT: 5000,
+        HOST: '0.0.0.0', // Listen on all interfaces
       },
       // Logging
       error_file: './logs/pm2-error.log',
@@ -49,6 +52,7 @@ module.exports = {
       env: {
         NODE_ENV: 'development',
         PORT: 5000,
+        HOST: '0.0.0.0', // Listen on all interfaces
       },
       error_file: './logs/pm2-dev-error.log',
       out_file: './logs/pm2-dev-out.log',
