@@ -8,8 +8,14 @@
 # Pull latest code (includes port helper script)
 git pull origin main
 
-# Stop all PM2 processes
-pm2 delete all
+# ⚠️ IMPORTANT: Check what PM2 processes are running first
+pm2 list
+
+# Stop ONLY this app (safer - won't affect other apps)
+pm2 delete asset-manager-dev
+pm2 delete asset-manager
+
+# ⚠️ Only use "pm2 delete all" if you have NO other apps on PM2
 
 # Check what's using port 5000
 npm run port:check
@@ -20,7 +26,7 @@ npm run port:kill
 # Verify port is free
 npm run port:check
 
-# Verify PM2 is clean
+# Verify PM2 status
 pm2 list
 ```
 
@@ -68,8 +74,14 @@ git pull origin main
 # Install any new dependencies
 npm install
 
-# Stop everything
-pm2 delete all
+# Check what's running
+pm2 list
+
+# Stop ONLY this app (won't affect other apps)
+pm2 delete asset-manager-dev
+pm2 delete asset-manager
+
+# ⚠️ Only use "pm2 delete all" if you have NO other apps
 
 # Start fresh
 npm run pm2:start:dev
@@ -110,6 +122,20 @@ PORT=5000
 HOST=0.0.0.0  # Listen on all interfaces, not just localhost
 ```
 
+## ⚠️ Important: Multiple Apps on PM2
+
+If you have other applications running on PM2, **DO NOT** use `pm2 delete all` as it will stop all your apps.
+
+**Safe commands (only affects this app):**
+```bash
+pm2 stop asset-manager-dev
+pm2 stop asset-manager
+pm2 delete asset-manager-dev
+pm2 delete asset-manager
+```
+
+**See `PM2_SAFE_COMMANDS.md` for detailed guide on working with multiple apps.**
+
 ## If Issues Persist
 
 1. **Check logs:**
@@ -125,4 +151,9 @@ HOST=0.0.0.0  # Listen on all interfaces, not just localhost
 3. **See full troubleshooting guide:**
    ```bash
    cat TROUBLESHOOTING.md
+   ```
+
+4. **See safe PM2 commands guide:**
+   ```bash
+   cat PM2_SAFE_COMMANDS.md
    ```

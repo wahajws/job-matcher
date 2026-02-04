@@ -99,17 +99,35 @@ sudo netstat -tulpn | grep 5000
 sudo kill -9 <PID>
 ```
 
-#### Step 2: Stop All PM2 Processes
+#### Step 2: Stop Only This App (Safer - Recommended)
 ```bash
+# Check what PM2 processes are running
+pm2 list
+
+# Stop only this app (safer - won't affect other apps)
+pm2 stop asset-manager-dev
+pm2 stop asset-manager
+
+# Delete only this app's processes
+pm2 delete asset-manager-dev
+pm2 delete asset-manager
+
+# Or delete by ID if you see multiple instances
+pm2 delete <id>
+```
+
+**⚠️ WARNING:** If you have other apps running on PM2, use the commands above instead of `pm2 delete all` which will stop ALL PM2 processes.
+
+#### Step 2b: Stop All PM2 Processes (Use Only If No Other Apps)
+```bash
+# ⚠️ ONLY use this if you have NO other apps on PM2
+# This will stop ALL PM2 processes on the server
+
 # Stop all PM2 processes
 pm2 stop all
 
-# Delete all PM2 processes (recommended for clean start)
+# Delete all PM2 processes
 pm2 delete all
-
-# Or stop/delete specific app
-pm2 stop asset-manager-dev
-pm2 delete asset-manager-dev
 ```
 
 #### Step 3: Check PM2 Status
