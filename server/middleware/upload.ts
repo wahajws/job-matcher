@@ -61,5 +61,6 @@ export const upload = multer({
   fileFilter,
   limits: {
     fileSize: maxFileSize,
+    files: 1000, // Allow up to 1000 files per upload
   },
 });

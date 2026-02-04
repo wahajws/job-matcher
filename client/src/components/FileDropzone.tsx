@@ -20,7 +20,7 @@ export function FileDropzone({
   files,
   onRemoveFile,
   disabled = false,
-  maxFiles = 50,
+  maxFiles = 1000,
 }: FileDropzoneProps) {
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {

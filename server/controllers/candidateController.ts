@@ -265,6 +265,8 @@ export class CandidateController extends BaseController {
         throw error;
       }
 
+      console.log(`[Upload] Processing ${files.length} files in parallel...`);
+
       const result = {
         successful: 0,
         failed: 0,
@@ -272,7 +274,11 @@ export class CandidateController extends BaseController {
         files: [] as any[],
       };
 
-      for (const file of files) {
+      // Process files in parallel with concurrency control
+      const CONCURRENCY_LIMIT = parseInt(process.env.UPLOAD_CONCURRENCY || '10', 10); // Process 10 files at a time
+      
+      // Helper function to process a single file
+      const processFile = async (file: Express.Multer.File): Promise<any> => {
         try {
           // Validate file was saved correctly by multer (diskStorage)
           if (!file.path) {
@@ -299,40 +305,28 @@ export class CandidateController extends BaseController {
           // Check for duplicate filename
           const existing = await CvFile.findOne({ where: { filename: file.originalname } });
           if (existing) {
-            result.duplicates++;
-            result.files.push({
+            return {
               filename: file.originalname,
               progress: 100,
               status: 'duplicate',
               error: 'File already exists',
-            });
-            continue;
+            };
           }
 
-          console.log('File saved successfully:', {
-            originalname: file.originalname,
-            savedPath: absoluteFilePath,
-            size: fileSizeToStore,
-          });
+          console.log(`[Upload] Processing file: ${file.originalname}`);
 
           // Extract text from PDF and get candidate info using Qwen
           let candidateInfo;
           try {
-            console.log(`[Upload] Extracting text from PDF: ${absoluteFilePath}`);
             const cvText = await pdfParserService.extractText(absoluteFilePath);
-            console.log(`[Upload] Extracted ${cvText.length} characters from PDF`);
-            console.log(`[Upload] First 200 chars: ${cvText.substring(0, 200)}`);
             
             if (!cvText || cvText.trim().length === 0) {
               throw new Error('PDF text extraction returned empty content');
             }
             
-            console.log(`[Upload] Calling Qwen to extract candidate info...`);
             candidateInfo = await qwenService.extractCandidateInfo(cvText);
-            console.log('[Upload] Extracted candidate info from CV:', candidateInfo);
           } catch (error: any) {
-            console.error('[Upload] Failed to extract candidate info from CV, using filename fallback:', error.message);
-            console.error('[Upload] Error stack:', error.stack);
+            console.error(`[Upload] Failed to extract candidate info from ${file.originalname}, using filename fallback:`, error.message);
             // Fallback: extract name from filename
             const nameParts = file.originalname.replace('.pdf', '').replace(/_/g, ' ').replace(/-/g, ' ').split(' ');
             const fallbackName = nameParts.slice(0, 2).join(' ') || 'Unknown';
@@ -368,25 +362,64 @@ export class CandidateController extends BaseController {
             batch_tag: batchTag,
           });
 
-          result.successful++;
-          result.files.push({
+          // Trigger async processing for matrix generation (in background)
+          this.processCvAsync(cvFile.id).catch((err) => {
+            console.error(`[Upload] Background processing failed for ${file.originalname}:`, err);
+          });
+
+          return {
             filename: file.originalname,
             progress: 100,
             status: 'success',
-          });
-
-          // Trigger async processing for matrix generation (in background)
-          this.processCvAsync(cvFile.id).catch(console.error);
+          };
         } catch (error: any) {
-          result.failed++;
-          result.files.push({
+          console.error(`[Upload] Error processing ${file.originalname}:`, error.message);
+          return {
             filename: file.originalname,
             progress: 100,
             status: 'failed',
             error: error.message || 'Upload failed',
-          });
+          };
         }
+      };
+
+      // Process files in batches with concurrency control
+      const processBatch = async (batch: Express.Multer.File[]) => {
+        const results = await Promise.allSettled(batch.map(file => processFile(file)));
+        return results.map((result, index) => {
+          if (result.status === 'fulfilled') {
+            return result.value;
+          } else {
+            return {
+              filename: batch[index].originalname,
+              progress: 100,
+              status: 'failed',
+              error: result.reason?.message || 'Unknown error',
+            };
+          }
+        });
+      };
+
+      // Process all files in batches
+      for (let i = 0; i < files.length; i += CONCURRENCY_LIMIT) {
+        const batch = files.slice(i, i + CONCURRENCY_LIMIT);
+        console.log(`[Upload] Processing batch ${Math.floor(i / CONCURRENCY_LIMIT) + 1}/${Math.ceil(files.length / CONCURRENCY_LIMIT)} (${batch.length} files)`);
+        const batchResults = await processBatch(batch);
+        result.files.push(...batchResults);
+        
+        // Update counters
+        batchResults.forEach((fileResult) => {
+          if (fileResult.status === 'success') {
+            result.successful++;
+          } else if (fileResult.status === 'duplicate') {
+            result.duplicates++;
+          } else {
+            result.failed++;
+          }
+        });
       }
+
+      console.log(`[Upload] Completed: ${result.successful} successful, ${result.duplicates} duplicates, ${result.failed} failed`);
 
       return result;
     });

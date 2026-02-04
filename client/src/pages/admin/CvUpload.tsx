@@ -101,6 +101,7 @@ export default function CvUpload() {
               files={files}
               onRemoveFile={handleRemoveFile}
               disabled={uploadMutation.isPending}
+              maxFiles={1000}
             />
 
             <div className="space-y-2">
