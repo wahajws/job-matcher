@@ -38,6 +38,7 @@ Candidate.init(
     email: {
       type: DataTypes.STRING(255),
       allowNull: false,
+      unique: true, // Prevent duplicate candidates by email
     },
     phone: {
       type: DataTypes.STRING(50),
