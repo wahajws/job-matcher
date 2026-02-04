@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import type { Role, User } from '@/types';
 import { login as apiLogin, logout as apiLogout, getCurrentUser } from '@/api';
 import { setAuthToken } from '@/lib/apiClient';
+import { generateUUID } from '@/utils/uuid';
 
 interface AuthState {
   user: User | null;
@@ -26,7 +27,7 @@ export const useAuthStore = create<AuthState>()(
       // Mock login (for demo mode)
       login: (name: string, email: string, role: Role) => {
         const user: User = {
-          id: crypto.randomUUID(),
+          id: generateUUID(),
           name,
           email,
           role,
