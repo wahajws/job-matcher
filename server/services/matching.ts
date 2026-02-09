@@ -157,11 +157,62 @@ export class MatchingService {
     if (normalized === 'kubernetes' || normalized === 'k8s') return 'kubernetes';
     if (normalized === 'ci/cd' || normalized === 'cicd' || normalized === 'ci cd') return 'cicd';
     
-    // ML/AI
+    // ML/AI - Core frameworks
     if (normalized === 'tensorflow' || normalized === 'tf') return 'tensorflow';
     if (normalized === 'pytorch') return 'pytorch';
     if (normalized === 'machine learning' || normalized === 'ml') return 'machine-learning';
     if (normalized === 'deep learning' || normalized === 'dl') return 'deep-learning';
+    
+    // ML/AI - LLM related (handles "LLM", "LLM Integration", "Large Language Model", etc.)
+    if (normalized === 'llm' || normalized.includes('large language model') || 
+        (normalized.startsWith('llm') && !normalized.includes('html'))) {
+      return 'llm';
+    }
+    
+    // ML/AI - RAG related (handles "RAG", "RAG (Retrieval-Augmented Generation)", "Retrieval Augmented Generation", etc.)
+    if (normalized === 'rag' || normalized.startsWith('rag ') || normalized.startsWith('rag(') ||
+        normalized.includes('retrieval augmented generation') || normalized.includes('retrieval-augmented generation')) {
+      return 'rag';
+    }
+    
+    // ML/AI - NLP (handles "NLP", "Natural Language Processing", etc.)
+    if (normalized === 'nlp' || normalized.includes('natural language processing')) {
+      return 'nlp';
+    }
+    
+    // ML/AI - Computer Vision (handles "Computer Vision", "CV" in ML context is ambiguous so skip that)
+    if (normalized.includes('computer vision')) {
+      return 'computer-vision';
+    }
+    
+    // ML/AI - Prompt Engineering
+    if (normalized.includes('prompt engineering') || withoutSeparators === 'promptengineering') {
+      return 'prompt-engineering';
+    }
+    
+    // ML/AI - Generative AI
+    if (normalized.includes('generative ai') || normalized === 'genai' || normalized === 'gen ai' ||
+        withoutSeparators === 'generativeai' || withoutSeparators === 'genai') {
+      return 'generative-ai';
+    }
+    
+    // ML/AI - Other AI/ML skills
+    if (normalized.includes('image generation') || normalized.includes('image synthesis')) return 'image-generation';
+    if (normalized.includes('video processing') || normalized.includes('video analysis')) return 'video-processing';
+    if (normalized.includes('data science') || normalized === 'data scientist') return 'data-science';
+    if (normalized === 'langchain' || normalized === 'lang chain') return 'langchain';
+    if (normalized === 'huggingface' || normalized === 'hugging face') return 'huggingface';
+    if (normalized === 'openai' || normalized === 'open ai') return 'openai';
+    if (normalized.includes('stable diffusion')) return 'stable-diffusion';
+    if (normalized === 'transformers' || normalized === 'transformer') return 'transformers';
+    if (normalized === 'scikit-learn' || normalized === 'sklearn') return 'scikit-learn';
+    if (normalized === 'pandas') return 'pandas';
+    if (normalized === 'numpy') return 'numpy';
+    
+    // Python frameworks
+    if (normalized === 'fastapi' || normalized === 'fast api') return 'fastapi';
+    if (normalized === 'django') return 'django';
+    if (normalized === 'flask') return 'flask';
     
     // For other skills, return the version without separators for better matching
     return withoutSeparators || normalized;
@@ -194,6 +245,48 @@ export class MatchingService {
   private areSqlCompatible(candidateSkill: string, requiredSkill: string): boolean {
     const sqlFamily = new Set(['sql', 'mysql', 'postgresql', 'mssql', 'sqlite']);
     return sqlFamily.has(candidateSkill) && sqlFamily.has(requiredSkill);
+  }
+
+  /**
+   * Check if candidate skill partially matches the required skill.
+   * This handles cases where Qwen uses different naming conventions
+   * for the same skill on candidates vs jobs.
+   * e.g., candidate "REST API Development" should match job "REST APIs"
+   * Minimum length checks prevent false positives like "Java" matching "JavaScript"
+   */
+  private isPartialSkillMatch(candidateSkill: string, requiredSkill: string): boolean {
+    if (!candidateSkill || !requiredSkill) return false;
+    
+    // Both must be at least 3 chars to avoid false positives
+    if (candidateSkill.length < 3 || requiredSkill.length < 3) return false;
+    
+    // Don't partial match if they're very different lengths (ratio > 3:1)
+    const lenRatio = Math.max(candidateSkill.length, requiredSkill.length) / 
+                     Math.min(candidateSkill.length, requiredSkill.length);
+    if (lenRatio > 3) return false;
+    
+    // Prevent known false positives
+    const falsePairs = [
+      ['java', 'javascript'], ['javascript', 'java'],
+      ['react', 'react-native'], ['react-native', 'react'],
+      ['angular', 'angularjs'], ['angularjs', 'angular'],
+      ['c', 'c++'], ['c++', 'c#'], ['c#', 'c'],
+    ];
+    for (const [a, b] of falsePairs) {
+      if ((candidateSkill === a && requiredSkill === b) ||
+          (candidateSkill === b && requiredSkill === a)) {
+        return false;
+      }
+    }
+    
+    // Check if one contains the other (for skills >= 4 chars)
+    if (candidateSkill.length >= 4 && requiredSkill.length >= 4) {
+      if (candidateSkill.includes(requiredSkill) || requiredSkill.includes(candidateSkill)) {
+        return true;
+      }
+    }
+    
+    return false;
   }
 
   /**
@@ -305,11 +398,21 @@ export class MatchingService {
         if (candidateNormalizedSkills.has(normalized) || candidateOriginalSkills.has(original)) {
           matchedCoreRequired++;
         } else {
-          // Check SQL family compatibility
+          // Check SQL family compatibility or partial match
+          let found = false;
           for (const cs of candidateNormalizedSkills) {
-            if (this.areSqlCompatible(cs, normalized)) {
+            if (this.areSqlCompatible(cs, normalized) || this.isPartialSkillMatch(cs, normalized)) {
               matchedCoreRequired++;
+              found = true;
               break;
+            }
+          }
+          if (!found) {
+            for (const cs of candidateOriginalSkills) {
+              if (this.isPartialSkillMatch(cs, original)) {
+                matchedCoreRequired++;
+                break;
+              }
             }
           }
         }
@@ -436,8 +539,13 @@ export class MatchingService {
         totalWeight
     );
 
+    const computedScore = Math.min(100, Math.max(0, finalScore));
+    
+    // Log breakdown for debugging
+    console.log(`[Matching] Score breakdown: skills=${skillsScore} (w:${skillsWeight}), exp=${experienceScore} (w:${jobMatrix.experience_weight}), domain=${domainScore} (w:${jobMatrix.domain_weight}), location=${locationScore} (w:${jobMatrix.location_weight}) → final=${computedScore}`);
+
     return {
-      score: Math.min(100, Math.max(0, finalScore)),
+      score: computedScore,
       breakdown: {
         skills: skillsScore,
         experience: experienceScore,
@@ -536,10 +644,10 @@ export class MatchingService {
           
           let matched = candidateSkillMap.has(normalized) || candidateSkillMap.has(original);
           
-          // Check SQL family compatibility
+          // Check SQL family compatibility or partial match
           if (!matched) {
             for (const [cs] of candidateSkillMap) {
-              if (this.areSqlCompatible(cs, normalized)) {
+              if (this.areSqlCompatible(cs, normalized) || this.isPartialSkillMatch(cs, normalized)) {
                 matched = true;
                 break;
               }
@@ -570,7 +678,7 @@ export class MatchingService {
           
           if (!matched) {
             for (const [cs] of candidateSkillMap) {
-              if (this.areSqlCompatible(cs, normalized)) {
+              if (this.areSqlCompatible(cs, normalized) || this.isPartialSkillMatch(cs, normalized)) {
                 matched = true;
                 break;
               }
@@ -651,7 +759,7 @@ export class MatchingService {
           let matched = candidateSkillMap.has(normalized) || candidateSkillMap.has(original);
           if (!matched) {
             for (const [cs] of candidateSkillMap) {
-              if (this.areSqlCompatible(cs, normalized)) {
+              if (this.areSqlCompatible(cs, normalized) || this.isPartialSkillMatch(cs, normalized)) {
                 matched = true;
                 break;
               }
@@ -736,20 +844,28 @@ export class MatchingService {
     
     if (candidateYears < expectedMin) {
       const ratio = candidateYears / Math.max(expectedMin, 1);
+      if (ratio < 0.5) {
+        return 0;  // Severely underqualified
+      }
       if (ratio < 0.8) {
-        return 0;
+        return Math.round(ratio * 40); // Moderately underqualified
       }
       return Math.round(30 + (ratio * 50));
     } else if (candidateYears <= expectedMax) {
       return 100;
     } else {
+      // Overqualification: gradual decay instead of hard cutoff
       const excessYears = candidateYears - expectedMax;
       if (excessYears <= 1) {
         return 80;
       } else if (excessYears <= 2) {
-        return 50;
+        return 60;
+      } else if (excessYears <= 3) {
+        return 40;
+      } else if (excessYears <= 5) {
+        return 25;
       } else {
-        return 0;
+        return 10;  // Very overqualified but never fully 0
       }
     }
   }
@@ -757,6 +873,7 @@ export class MatchingService {
   /**
    * Fix C: ACTUAL domain matching — extracts domain keywords from job info
    * and compares with candidate domains and roles.
+   * Now also maps candidate domain labels to the same meta-categories for comparison.
    */
   private calculateDomainScore(
     candidateDomains: any[],
@@ -774,14 +891,14 @@ export class MatchingService {
       return 50;
     }
     
-    // Build candidate domain set
-    const candidateDomainSet = new Set<string>();
+    // Build candidate domain set from raw labels
+    const candidateDomainLabels = new Set<string>();
     
     if (candidateDomains && Array.isArray(candidateDomains)) {
       candidateDomains.forEach((domain: any) => {
         const domainName = typeof domain === 'string' ? domain : domain.name || domain.domain || '';
         if (domainName) {
-          candidateDomainSet.add(domainName.toLowerCase().trim());
+          candidateDomainLabels.add(domainName.toLowerCase().trim());
         }
       });
     }
@@ -791,21 +908,23 @@ export class MatchingService {
       candidateRoles.forEach((role: any) => {
         const roleName = typeof role === 'string' ? role : '';
         if (roleName) {
-          candidateDomainSet.add(roleName.toLowerCase().trim());
+          candidateDomainLabels.add(roleName.toLowerCase().trim());
         }
       });
     }
     
-    if (candidateDomainSet.size === 0) {
+    if (candidateDomainLabels.size === 0) {
       return 40; // No domain info = slightly penalized
     }
     
-    // Calculate domain match
+    // Map candidate domain labels to the SAME meta-categories used by job domain extraction
+    const candidateDomainCategories = this.mapCandidateDomainsToCategories(candidateDomainLabels);
+    
+    // Calculate domain match using meta-categories
     let matchCount = 0;
-    const candidateDomainText = Array.from(candidateDomainSet).join(' ');
     
     for (const keyword of jobDomainKeywords) {
-      if (candidateDomainSet.has(keyword) || candidateDomainText.includes(keyword)) {
+      if (candidateDomainCategories.has(keyword)) {
         matchCount++;
       }
     }
@@ -816,6 +935,45 @@ export class MatchingService {
     if (matchRatio >= 0.25) return 75;  // Partial domain match
     if (matchCount > 0) return 60;      // At least some overlap
     return 30;                          // No domain match = low score
+  }
+
+  /**
+   * Maps candidate domain labels (e.g., "Full-Stack Development", "AI", "Cloud Computing")
+   * to the same meta-category keys used by extractDomainKeywords (e.g., "web", "ml", "devops").
+   */
+  private mapCandidateDomainsToCategories(domainLabels: Set<string>): Set<string> {
+    const categories = new Set<string>();
+    const allText = Array.from(domainLabels).join(' ');
+    
+    // Map domain labels to meta-categories
+    const labelPatterns: Record<string, string[]> = {
+      'mobile': ['mobile', 'ios', 'android', 'react native', 'flutter', 'app development'],
+      'web': ['web', 'frontend', 'front-end', 'front end', 'fullstack', 'full-stack', 'full stack'],
+      'backend': ['backend', 'back-end', 'back end', 'server-side', 'server side', 'api', 'microservices'],
+      'devops': ['devops', 'infrastructure', 'cloud computing', 'cloud', 'sre', 'site reliability'],
+      'data': ['data science', 'data engineering', 'data analytics', 'analytics', 'big data', 'etl', 'data pipeline'],
+      'ml': ['machine learning', 'deep learning', 'artificial intelligence', 'ai', 'nlp', 'computer vision', 
+             'generative ai', 'llm', 'neural network', 'ml'],
+      'security': ['security', 'cybersecurity', 'infosec', 'penetration testing'],
+      'fintech': ['fintech', 'financial', 'banking', 'payment', 'trading', 'finance'],
+      'healthcare': ['healthcare', 'health tech', 'medical', 'pharma', 'clinical'],
+      'ecommerce': ['ecommerce', 'e-commerce', 'retail', 'marketplace', 'shopping'],
+      'saas': ['saas', 'software as a service', 'cloud software', 'platform', 'software development'],
+      'gaming': ['gaming', 'game dev', 'game development', 'unity', 'unreal'],
+      'embedded': ['embedded', 'iot', 'firmware', 'hardware', 'microcontroller'],
+      'blockchain': ['blockchain', 'web3', 'crypto', 'defi', 'smart contract'],
+    };
+    
+    for (const [category, patterns] of Object.entries(labelPatterns)) {
+      for (const pattern of patterns) {
+        if (allText.includes(pattern)) {
+          categories.add(category);
+          break;
+        }
+      }
+    }
+    
+    return categories;
   }
 
   /**
