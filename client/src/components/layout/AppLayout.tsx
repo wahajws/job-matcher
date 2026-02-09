@@ -27,6 +27,7 @@ import {
   Moon,
   Sun,
   Sparkles,
+  RefreshCw,
 } from 'lucide-react';
 
 interface AppLayoutProps {
@@ -38,6 +39,7 @@ const adminMenuItems = [
   { title: 'CVs', url: '/admin/cvs', icon: FileText },
   { title: 'Upload CVs', url: '/admin/cvs/upload', icon: Upload },
   { title: 'Jobs', url: '/admin/jobs', icon: Briefcase },
+  { title: 'Bulk Operations', url: '/admin/bulk-operations', icon: RefreshCw },
   { title: 'Settings', url: '/admin/settings', icon: Settings },
 ];
 

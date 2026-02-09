@@ -225,6 +225,54 @@ export async function getRecentJobs(): Promise<Job[]> {
   return apiGet<Job[]>('/dashboard/recent-jobs');
 }
 
+// ==================== BULK OPERATIONS ====================
+export async function getBulkCandidatesSummary() {
+  return apiGet<{
+    totalCandidates: number;
+    withMatrix: number;
+    withoutMatrix: number;
+    withCvText: number;
+    totalJobs: number;
+    jobsWithMatrix: number;
+  }>('/bulk-operations/candidates-summary');
+}
+
+export async function startBulkRegenerateMatrices(options?: { candidateIds?: string[]; onlyMissing?: boolean }) {
+  return apiPost<{ jobId: string; message: string }>('/bulk-operations/regenerate-matrices', options || {});
+}
+
+export async function startBulkRerunMatching(options?: { candidateIds?: string[] }) {
+  return apiPost<{ jobId: string; message: string }>('/bulk-operations/rerun-matching', options || {});
+}
+
+export async function startBulkRegenerateAndMatch(options?: { candidateIds?: string[]; onlyMissing?: boolean }) {
+  return apiPost<{ jobId: string; message: string }>('/bulk-operations/regenerate-and-match', options || {});
+}
+
+export async function getBulkJobStatus(jobId: string) {
+  return apiGet<{
+    id: string;
+    type: string;
+    status: 'running' | 'completed' | 'failed' | 'cancelled';
+    total: number;
+    processed: number;
+    succeeded: number;
+    failed: number;
+    errors: { candidateId: string; name: string; error: string }[];
+    startedAt: string;
+    completedAt?: string;
+    currentCandidate?: string;
+  }>(`/bulk-operations/status/${jobId}`);
+}
+
+export async function getAllBulkJobs() {
+  return apiGet<any[]>('/bulk-operations/status');
+}
+
+export async function cancelBulkJob(jobId: string) {
+  return apiPost(`/bulk-operations/cancel/${jobId}`);
+}
+
 // ==================== CANDIDATE-FACING ====================
 export async function getRecommendedJobs(candidateId: string): Promise<
   (MatchResult & { job?: Job })[]

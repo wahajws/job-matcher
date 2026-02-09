@@ -19,6 +19,7 @@ import JobNew from "@/pages/admin/JobNew";
 import JobNewFromUrl from "@/pages/admin/JobNewFromUrl";
 import JobDetail from "@/pages/admin/JobDetail";
 import Settings from "@/pages/admin/Settings";
+import BulkOperations from "@/pages/admin/BulkOperations";
 
 import CandidateDashboard from "@/pages/candidate/Dashboard";
 import CandidateProfile from "@/pages/candidate/Profile";
@@ -153,6 +154,13 @@ function Router() {
         <ProtectedRoute>
           <AdminRoute>
             <JobDetail />
+          </AdminRoute>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/admin/bulk-operations">
+        <ProtectedRoute>
+          <AdminRoute>
+            <BulkOperations />
           </AdminRoute>
         </ProtectedRoute>
       </Route>

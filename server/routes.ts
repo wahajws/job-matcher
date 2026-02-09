@@ -9,6 +9,7 @@ import noteRoutes from "./routes/notes.js";
 import tagRoutes from "./routes/tags.js";
 import dashboardRoutes from "./routes/dashboard.js";
 import reportRoutes from "./routes/reports.js";
+import bulkOperationsRoutes from "./routes/bulkOperations.js";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -24,6 +25,7 @@ export async function registerRoutes(
   app.use("/api/candidates", tagRoutes); // Tags are under candidates
   app.use("/api/dashboard", dashboardRoutes);
   app.use("/api", reportRoutes); // Reports routes
+  app.use("/api/bulk-operations", bulkOperationsRoutes);
 
   return httpServer;
 }
