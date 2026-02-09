@@ -500,13 +500,43 @@ Return ONLY valid JSON, no additional text.`;
       })
       .join(', ');
 
+    // Determine seniority levels for gap calculation
+    const seniorityLevels: Record<string, number> = {
+      'internship': 0, 'intern': 0, 'student': 0, 'fresh graduate': 0,
+      'junior': 1, 'entry': 1,
+      'mid': 2, 'mid-level': 2, 'intermediate': 2,
+      'senior': 3,
+      'lead': 4, 'staff': 4, 'principal': 5, 'architect': 5,
+    };
+
+    // Infer candidate seniority from experience + roles
+    const candidateYears = candidateMatrix.total_years_experience || 0;
+    const candidateRoles = (candidateInfo.roles || candidateMatrix.roles || []).map((r: string) => r.toLowerCase());
+    const isStudent = candidateRoles.some((r: string) => ['student', 'intern', 'trainee', 'fresh graduate'].includes(r)) 
+      || (candidateInfo.headline || '').toLowerCase().includes('student')
+      || (candidateInfo.headline || '').toLowerCase().includes('undergraduate')
+      || (candidateInfo.headline || '').toLowerCase().includes('fresh grad');
+    
+    let candidateSeniorityLevel = 2; // default mid
+    if (isStudent || candidateYears === 0) candidateSeniorityLevel = 0;
+    else if (candidateYears <= 2) candidateSeniorityLevel = 1;
+    else if (candidateYears <= 5) candidateSeniorityLevel = 2;
+    else if (candidateYears <= 8) candidateSeniorityLevel = 3;
+    else candidateSeniorityLevel = 4;
+
+    const jobSeniorityStr = (jobInfo.seniorityLevel || 'mid').toLowerCase();
+    const jobSeniorityLevel = seniorityLevels[jobSeniorityStr] !== undefined ? seniorityLevels[jobSeniorityStr] : 2;
+    const seniorityGap = jobSeniorityLevel - candidateSeniorityLevel; // positive = candidate is under-qualified
+
     const prompt = `You are an expert technical recruiter. Evaluate how well this candidate matches this job.
+BE REALISTIC AND STRICT — do not inflate scores. A student/intern should NOT score above 50 for senior roles.
 
 === CANDIDATE PROFILE ===
 Name: ${candidateInfo.name}
 Headline: ${candidateInfo.headline || 'Not specified'}
 Country: ${candidateInfo.country || 'Unknown'}
-Total Experience: ${candidateMatrix.total_years_experience || 0} years
+Total Professional Experience: ${candidateMatrix.total_years_experience || 0} years
+Is Student/Intern/Fresh Graduate: ${isStudent ? 'YES' : 'No'}
 Roles: ${JSON.stringify(candidateInfo.roles || candidateMatrix.roles || [])}
 Domains: ${JSON.stringify(candidateMatrix.domains || [])}
 Skills: ${candidateSkills}
@@ -517,40 +547,54 @@ Location Preferences: ${JSON.stringify(candidateMatrix.location_signals || {})}
 Title: ${jobInfo.title}
 Department: ${jobInfo.department || 'Not specified'}
 Seniority Level: ${jobInfo.seniorityLevel || 'Not specified'}
-Min Years Experience: ${jobInfo.minYearsExperience !== undefined ? jobInfo.minYearsExperience : 'Not specified'}
+Min Years Experience Required: ${jobInfo.minYearsExperience !== undefined ? jobInfo.minYearsExperience : 'Not specified'}
 Location Type: ${jobInfo.locationType || 'Not specified'}
 Job Country: ${jobInfo.country || 'Not specified'}
 Required Skills: ${jobRequiredSkills}
 Preferred Skills: ${jobPreferredSkills}
 Job Description (excerpt): ${(jobInfo.description || '').substring(0, 2000)}
 
+=== SENIORITY GAP ANALYSIS ===
+Candidate Level: ${isStudent ? 'Student/Intern (Level 0)' : `Level ${candidateSeniorityLevel}`} (${candidateYears} years experience)
+Job Level: ${jobSeniorityStr} (Level ${jobSeniorityLevel}) (requires ${jobInfo.minYearsExperience || 0}+ years)
+Seniority Gap: ${seniorityGap > 0 ? `Candidate is ${seniorityGap} level(s) BELOW the job requirement` : seniorityGap < 0 ? `Candidate is ${Math.abs(seniorityGap)} level(s) ABOVE the job requirement` : 'Good match'}
+
 === SCORING INSTRUCTIONS ===
 Score this candidate against this job in 4 dimensions (each 0-100):
 
 1. **skills** (0-100): How well do the candidate's skills match the job's required and preferred skills?
-   - CRITICAL: Use SEMANTIC matching, not just exact text matching!
-   - "GenAI" = "Generative AI" = relates to "LLM", "Large Language Models", "AI"
-   - "React" knowledge implies JavaScript/TypeScript knowledge
-   - "Python" + "TensorFlow" implies machine learning capability
-   - "FastAPI" implies Python backend development
-   - "LangChain" implies LLM/GenAI experience
-   - Consider skill TRANSFERABILITY: similar technologies show adaptability
-   - Weight by importance: core skills (weight 85-95) matter much more than nice-to-haves (weight 30-50)
-   - Score 80-100: Candidate has most/all core skills and many preferred skills
-   - Score 60-79: Candidate has some core skills, can likely learn the rest
-   - Score 40-59: Candidate has related but not exact skills
-   - Score 20-39: Candidate has few relevant skills
+   - Use SEMANTIC matching: "GenAI" = "Generative AI" = relates to "LLM"
+   - "React" implies JavaScript/TypeScript, "LangChain" implies LLM/GenAI
+   - Consider skill transferability between related technologies
+   - Weight by importance: core required skills matter more than nice-to-haves
+   - CRITICAL: Distinguish between ACADEMIC/PROJECT skills vs PROFESSIONAL skills
+     * A student who learned Python in university is NOT equivalent to a professional Python developer
+     * Skills listed as "1y" by a student are likely academic exposure, not production experience
+     * If the candidate is a student/intern, reduce skill scores by 15-25 points for skills that require professional depth
+   - Score 80-100: Has most core skills with PROFESSIONAL depth
+   - Score 60-79: Has core skills but limited professional experience with them
+   - Score 40-59: Has related/academic skills, would need significant ramp-up
+   - Score 20-39: Has few relevant skills
    - Score 0-19: Almost no relevant skills
 
 2. **experience** (0-100): Does the candidate's experience level match?
-   - Perfect match = 100, slight under/over = 80, significant mismatch = 40-60, extreme mismatch = 0-20
-   - Consider that intern experience is different from professional experience
-   - "Senior" candidates applying for "Mid" roles: slight penalty but not severe
-   - "Junior" candidates for "Senior" roles: significant penalty
+   - THIS IS CRITICAL. Experience is NOT just about skills — it's about professional maturity, ability to work independently, handle production systems, mentor others, etc.
+   - STRICT SCORING RULES:
+     * Student/Intern (0 years) applying for Internship: 90-100
+     * Student/Intern (0 years) applying for Junior role (1-2 years required): 40-60
+     * Student/Intern (0 years) applying for Mid role (2-5 years required): 15-30
+     * Student/Intern (0 years) applying for Senior role (5+ years required): 0-15
+     * Student/Intern (0 years) applying for Lead/Principal role: 0-10
+     * Junior (1-2 years) for Mid role: 50-70
+     * Junior (1-2 years) for Senior role: 15-30
+     * Mid (3-5 years) for Senior role: 50-70
+     * Perfect experience match: 85-100
+     * Overqualified by 1 level: 75-85 (slight penalty)
+     * Overqualified by 2+ levels: 60-70
 
 3. **domain** (0-100): Does the candidate's domain/industry experience align?
-   - Same domain = 100, related domain = 70-80, different but transferable = 50, unrelated = 30
-   - "SaaS" and "Web Development" are closely related
+   - Same domain = 85-100, related domain = 60-75, different but transferable = 40-55, unrelated = 15-30
+   - Academic domain experience (university projects) should score 10-20 points LOWER than professional domain experience
    - "AI/ML" and "Data Science" are closely related
    - "FinTech" and "Banking" are the same domain
 
@@ -560,11 +604,19 @@ Score this candidate against this job in 4 dimensions (each 0-100):
    - Willing to relocate = 70-80
    - Different country, not willing to relocate, onsite = 20-30
 
-Then calculate the overall score as a weighted average:
-- skills: ${100 - (jobMatrix.experience_weight || 20) - (jobMatrix.location_weight || 15) - (jobMatrix.domain_weight || 10)}% weight
-- experience: ${jobMatrix.experience_weight || 20}% weight
-- domain: ${jobMatrix.domain_weight || 10}% weight
-- location: ${jobMatrix.location_weight || 15}% weight
+=== OVERALL SCORE CALCULATION ===
+Calculate the weighted average:
+- skills: 40% weight
+- experience: 30% weight (experience matters a LOT)
+- domain: 15% weight
+- location: 15% weight
+
+MANDATORY SCORE CAPS (apply AFTER weighted average):
+- If seniority gap >= 3 levels (e.g., student → senior): overall score CANNOT exceed 35
+- If seniority gap >= 2 levels (e.g., student → mid, junior → senior): overall score CANNOT exceed 50
+- If seniority gap >= 1 level (e.g., junior → mid): overall score CANNOT exceed 65
+- If candidate has 0 years professional experience AND job requires 2+ years: overall score CANNOT exceed 55
+- If candidate has 0 years professional experience AND job requires 5+ years: overall score CANNOT exceed 35
 
 Also provide:
 - A 2-3 sentence natural language explanation of why this candidate matches or doesn't match
@@ -572,23 +624,26 @@ Also provide:
 
 Return a JSON object with this EXACT structure:
 {
-  "score": 75,
+  "score": 42,
   "breakdown": {
-    "skills": 80,
-    "experience": 70,
-    "domain": 85,
+    "skills": 55,
+    "experience": 20,
+    "domain": 50,
     "location": 100
   },
-  "explanation": "The candidate demonstrates strong skills in X and Y which align well with the job requirements...",
+  "explanation": "While the candidate shows academic knowledge of Python and JavaScript, they lack professional experience required for this mid-level role...",
   "gaps": [
-    {"type": "skill", "description": "Missing experience with X", "severity": "minor"},
-    {"type": "experience", "description": "2 years less than required", "severity": "moderate"}
+    {"type": "experience", "description": "0 years professional experience vs 3 years required", "severity": "critical"},
+    {"type": "skill", "description": "No production React experience", "severity": "major"}
   ]
 }
 
 IMPORTANT RULES:
-- Be GENEROUS with semantic skill matching. If a candidate has "Python" + "Deep Learning" + "NLP", they ARE relevant for a "GenAI Engineer" job even if they don't list "GenAI" explicitly.
-- Consider the WHOLE profile holistically — a candidate with strong AI/ML foundations is a great fit for GenAI even without that exact buzzword
+- Do NOT inflate scores. Be REALISTIC about what a student/intern can deliver vs what a professional role demands.
+- Academic projects and coursework do NOT count as professional experience.
+- A student knowing Python from university is NOT the same as a developer who shipped Python code in production for 3 years.
+- Use semantic skill matching (GenAI ≈ LLM ≈ Generative AI), but still penalize lack of professional depth.
+- If the candidate is clearly a student/fresh graduate and the job requires years of professional experience, the overall score MUST be low (below 50).
 - Return ONLY valid JSON, no additional text or markdown formatting.`;
 
     try {
@@ -619,8 +674,40 @@ IMPORTANT RULES:
       // Validate and clamp scores
       const clamp = (v: number) => Math.min(100, Math.max(0, Math.round(v || 0)));
       
+      let finalScore = clamp(parsed.score);
+      
+      // === SERVER-SIDE HARD CAPS (safety net in case LLM ignores instructions) ===
+      const minYearsRequired = jobInfo.minYearsExperience || 0;
+      
+      // Cap based on seniority gap
+      if (seniorityGap >= 3) {
+        finalScore = Math.min(finalScore, 35);
+      } else if (seniorityGap >= 2) {
+        finalScore = Math.min(finalScore, 50);
+      } else if (seniorityGap >= 1) {
+        finalScore = Math.min(finalScore, 65);
+      }
+      
+      // Cap based on experience years gap
+      if (candidateYears === 0 && minYearsRequired >= 5) {
+        finalScore = Math.min(finalScore, 35);
+      } else if (candidateYears === 0 && minYearsRequired >= 2) {
+        finalScore = Math.min(finalScore, 50);
+      } else if (candidateYears < minYearsRequired) {
+        const yearsGap = minYearsRequired - candidateYears;
+        if (yearsGap >= 5) {
+          finalScore = Math.min(finalScore, 35);
+        } else if (yearsGap >= 3) {
+          finalScore = Math.min(finalScore, 55);
+        }
+      }
+      
+      if (finalScore !== clamp(parsed.score)) {
+        console.log(`[Qwen] Score capped from ${clamp(parsed.score)} → ${finalScore} (seniority gap=${seniorityGap}, candidate=${candidateYears}y, job requires=${minYearsRequired}y)`);
+      }
+      
       return {
-        score: clamp(parsed.score),
+        score: finalScore,
         breakdown: {
           skills: clamp(parsed.breakdown?.skills),
           experience: clamp(parsed.breakdown?.experience),
