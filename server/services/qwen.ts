@@ -338,7 +338,7 @@ Return ONLY valid JSON, no additional text.`;
   }
 
   async generateCandidateMatrix(cvText: string): Promise<any> {
-    const prompt = `You are a CV parsing expert. Extract structured information from this CV:
+    const prompt = `You are a CV parsing expert. Extract ALL structured information from this CV thoroughly.
 
 ${cvText}
 
@@ -347,7 +347,7 @@ Return a JSON object with this exact structure:
   "skills": [{"name": "JavaScript", "level": "advanced", "yearsOfExperience": 5}],
   "roles": ["Software Engineer", "Tech Lead"],
   "totalYearsExperience": 8,
-  "domains": ["FinTech", "SaaS"],
+  "domains": ["FinTech", "SaaS", "AI/ML", "Web Development"],
   "education": [{"degree": "BSc Computer Science", "institution": "MIT", "year": 2015}],
   "languages": [{"language": "English", "proficiency": "Native"}],
   "locationSignals": {
@@ -361,14 +361,33 @@ Return a JSON object with this exact structure:
   "confidence": 85
 }
 
-CRITICAL for roles extraction:
+CRITICAL SKILL EXTRACTION RULES:
+1. Extract EVERY technical skill mentioned — include ALL programming languages, frameworks, libraries, tools, platforms, databases, cloud services, APIs, methodologies
+2. Include BOTH explicit skills AND implied skills:
+   - If CV mentions "built chatbot using OpenAI API" → extract skills: "OpenAI API", "LLM", "Chatbot Development", "Generative AI"
+   - If CV mentions "fine-tuned BERT model" → extract: "BERT", "NLP", "Transfer Learning", "Deep Learning", "Machine Learning"
+   - If CV mentions "RAG pipeline" → extract: "RAG", "LLM", "Vector Database", "Information Retrieval"
+   - If CV mentions "trained neural networks" → extract: "Neural Networks", "Deep Learning", "Machine Learning"
+   - If CV mentions "deployed on AWS Lambda" → extract: "AWS", "AWS Lambda", "Serverless", "Cloud Computing"
+   - If CV mentions "React dashboard" → extract: "React", "JavaScript", "Frontend Development"
+3. For AI/ML candidates, specifically look for and extract:
+   - LLM-related: LLM, GPT, OpenAI, Claude, Prompt Engineering, Fine-tuning, RAG, LangChain, Vector DB, Embeddings
+   - ML frameworks: TensorFlow, PyTorch, Scikit-learn, Keras, Hugging Face, Transformers
+   - ML domains: NLP, Computer Vision, Generative AI, Reinforcement Learning, Data Science
+   - Data tools: Pandas, NumPy, Jupyter, MLflow, Weights & Biases
+4. Set skill levels accurately: "beginner", "intermediate", "advanced", "expert"
+5. Include the number of years of experience for each skill if inferable
+
+CRITICAL DOMAIN EXTRACTION:
+- Extract ALL relevant industry domains AND technology domains
+- Technology domains: "AI/ML", "Generative AI", "Web Development", "Mobile Development", "Cloud Computing", "Data Engineering", "DevOps", "Cybersecurity", "Blockchain", etc.
+- Industry domains: "FinTech", "Healthcare", "E-commerce", "SaaS", "Education", "Gaming", etc.
+- Be thorough: if candidate worked on AI projects, include "AI/ML" AND "Generative AI" (if applicable) in domains
+
+CRITICAL ROLES EXTRACTION:
 - Extract roles with special attention to seniority indicators
-- If role contains "Intern", "Internship", "Trainee", "Apprentice", "Student" → mark clearly in roles array
-- If candidate is a student seeking internship → include "Intern" in roles (e.g., ["Data Analyst Intern"])
-- If CV mentions "seeking X Intern position" → include that role in the roles array
-- The "roles" array should reflect the candidate's actual/desired position level
-- Prioritize the most prominent/current role, especially if it's an intern/trainee/apprentice role
-- Look for keywords: "Intern", "Internship", "Trainee", "Apprentice", "Student" in job titles, summaries, or objective sections
+- If role contains "Intern", "Internship", "Trainee" → mark clearly in roles array
+- Prioritize the most prominent/current role
 
 Return ONLY valid JSON, no additional text.`;
 
@@ -382,7 +401,7 @@ Return ONLY valid JSON, no additional text.`;
     mustHaveSkills: string[],
     niceToHaveSkills: string[]
   ): Promise<any> {
-    const prompt = `Analyze this job posting and extract structured requirements:
+    const prompt = `Analyze this job posting and extract structured requirements. Be THOROUGH — extract every technical requirement.
 
 Title: ${title}
 Description: ${description}
@@ -395,27 +414,30 @@ Return a JSON object with this exact structure:
   "preferredSkills": [{"skill": "TypeScript", "weight": 60}],
   "experienceWeight": 20,
   "locationWeight": 15,
-  "domainWeight": 10
+  "domainWeight": 10,
+  "semanticKeywords": ["generative AI", "large language models", "machine learning", "backend development"]
 }
 
-CRITICAL RULES for skill weights:
+CRITICAL RULES:
 1. The "weight" field (0-100) indicates how IMPORTANT each skill is for THIS specific job
-2. CORE/PRIMARY skills (the main technology the job revolves around) MUST have weight 85-95
-   - Example: For a "React Native Developer" job, "React Native" should be weight 95
-   - Example: For a "Python Data Engineer" job, "Python" should be weight 90
-3. SECONDARY skills (supporting technologies) should have weight 60-80
-   - Example: For a "React Native Developer" job, "Redux" might be weight 75, "REST APIs" weight 70
-4. GENERIC/COMMON skills (tools everyone knows) should have weight 30-50
-   - Example: "Git" = weight 30, "Agile" = weight 35, "Communication" = weight 20
-5. Do NOT give high weights to soft skills (Communication, Teamwork, Problem Solving)
-6. Do NOT include pure soft skills in requiredSkills — only include technical skills
-7. Use EXACT technology names — distinguish between related but different technologies:
-   - "React" (web framework) is DIFFERENT from "React Native" (mobile framework)
-   - "Angular" (v2+) is DIFFERENT from "AngularJS" (v1)
-   - "Node.js" is DIFFERENT from "Deno"
-   - Keep specific: use "React Native" not just "React" if the job is for mobile
-8. For internships: Skills may have lower weights (50-70) as internships are learning opportunities
-9. For senior roles: Core skills should have higher weights (90-95)
+2. CORE/PRIMARY skills MUST have weight 85-95
+3. SECONDARY skills should have weight 60-80
+4. GENERIC skills should have weight 30-50
+5. Do NOT include pure soft skills in requiredSkills — only technical skills
+6. Use EXACT technology names — "React" ≠ "React Native", "Angular" ≠ "AngularJS"
+
+IMPORTANT — "semanticKeywords" field:
+- Extract 5-15 semantic keywords/phrases that describe what this job is REALLY about
+- Include technology themes: "generative AI", "machine learning", "full-stack web development", "cloud infrastructure"
+- Include domain themes: "fintech", "healthcare", "SaaS"
+- Include methodology themes: "agile", "microservices architecture", "CI/CD"
+- These keywords help with semantic matching — a candidate with "LLM" experience should match a "Generative AI" job
+- Think broadly: what kind of technical background would be ideal for this role?
+
+For AI/ML jobs specifically:
+- Include both specific skills (e.g., "PyTorch", "LangChain") AND broader categories (e.g., "Deep Learning", "LLM")
+- A "GenAI Engineer" job should have semanticKeywords like: ["generative AI", "large language models", "LLM", "prompt engineering", "AI/ML", "deep learning", "NLP"]
+- Include related/adjacent skills that a good candidate would likely have
 
 Return ONLY valid JSON, no additional text.`;
 
@@ -423,24 +445,203 @@ Return ONLY valid JSON, no additional text.`;
     return JSON.parse(response);
   }
 
+  /**
+   * LLM-based match evaluation — the LLM directly scores the candidate-job match.
+   * This replaces the deterministic scoring with semantic understanding.
+   * The LLM can understand that "GenAI" ≈ "LLM" ≈ "Generative AI" etc.
+   */
+  async evaluateMatch(
+    candidateMatrix: any,
+    jobMatrix: any,
+    jobInfo: {
+      title: string;
+      description: string;
+      department?: string;
+      seniorityLevel?: string;
+      minYearsExperience?: number;
+      locationType?: string;
+      country?: string;
+    },
+    candidateInfo: {
+      name: string;
+      headline?: string;
+      country?: string;
+      roles?: string[];
+    }
+  ): Promise<{
+    score: number;
+    breakdown: { skills: number; experience: number; domain: number; location: number };
+    explanation: string;
+    gaps: any[];
+  }> {
+    // Build a concise candidate summary from the matrix
+    const candidateSkills = (candidateMatrix.skills || [])
+      .map((s: any) => {
+        const name = s.name || s;
+        const level = s.level ? ` (${s.level})` : '';
+        const years = s.yearsOfExperience ? ` ${s.yearsOfExperience}y` : '';
+        return `${name}${level}${years}`;
+      })
+      .join(', ');
+
+    const jobRequiredSkills = (jobMatrix.required_skills || [])
+      .map((s: any) => {
+        const skill = s.skill || s;
+        const weight = s.weight ? ` [importance: ${s.weight}/100]` : '';
+        return `${skill}${weight}`;
+      })
+      .join(', ');
+
+    const jobPreferredSkills = (jobMatrix.preferred_skills || [])
+      .map((s: any) => {
+        const skill = s.skill || s;
+        const weight = s.weight ? ` [importance: ${s.weight}/100]` : '';
+        return `${skill}${weight}`;
+      })
+      .join(', ');
+
+    const prompt = `You are an expert technical recruiter. Evaluate how well this candidate matches this job.
+
+=== CANDIDATE PROFILE ===
+Name: ${candidateInfo.name}
+Headline: ${candidateInfo.headline || 'Not specified'}
+Country: ${candidateInfo.country || 'Unknown'}
+Total Experience: ${candidateMatrix.total_years_experience || 0} years
+Roles: ${JSON.stringify(candidateInfo.roles || candidateMatrix.roles || [])}
+Domains: ${JSON.stringify(candidateMatrix.domains || [])}
+Skills: ${candidateSkills}
+Education: ${JSON.stringify(candidateMatrix.education || [])}
+Location Preferences: ${JSON.stringify(candidateMatrix.location_signals || {})}
+
+=== JOB REQUIREMENTS ===
+Title: ${jobInfo.title}
+Department: ${jobInfo.department || 'Not specified'}
+Seniority Level: ${jobInfo.seniorityLevel || 'Not specified'}
+Min Years Experience: ${jobInfo.minYearsExperience !== undefined ? jobInfo.minYearsExperience : 'Not specified'}
+Location Type: ${jobInfo.locationType || 'Not specified'}
+Job Country: ${jobInfo.country || 'Not specified'}
+Required Skills: ${jobRequiredSkills}
+Preferred Skills: ${jobPreferredSkills}
+Job Description (excerpt): ${(jobInfo.description || '').substring(0, 2000)}
+
+=== SCORING INSTRUCTIONS ===
+Score this candidate against this job in 4 dimensions (each 0-100):
+
+1. **skills** (0-100): How well do the candidate's skills match the job's required and preferred skills?
+   - CRITICAL: Use SEMANTIC matching, not just exact text matching!
+   - "GenAI" = "Generative AI" = relates to "LLM", "Large Language Models", "AI"
+   - "React" knowledge implies JavaScript/TypeScript knowledge
+   - "Python" + "TensorFlow" implies machine learning capability
+   - "FastAPI" implies Python backend development
+   - "LangChain" implies LLM/GenAI experience
+   - Consider skill TRANSFERABILITY: similar technologies show adaptability
+   - Weight by importance: core skills (weight 85-95) matter much more than nice-to-haves (weight 30-50)
+   - Score 80-100: Candidate has most/all core skills and many preferred skills
+   - Score 60-79: Candidate has some core skills, can likely learn the rest
+   - Score 40-59: Candidate has related but not exact skills
+   - Score 20-39: Candidate has few relevant skills
+   - Score 0-19: Almost no relevant skills
+
+2. **experience** (0-100): Does the candidate's experience level match?
+   - Perfect match = 100, slight under/over = 80, significant mismatch = 40-60, extreme mismatch = 0-20
+   - Consider that intern experience is different from professional experience
+   - "Senior" candidates applying for "Mid" roles: slight penalty but not severe
+   - "Junior" candidates for "Senior" roles: significant penalty
+
+3. **domain** (0-100): Does the candidate's domain/industry experience align?
+   - Same domain = 100, related domain = 70-80, different but transferable = 50, unrelated = 30
+   - "SaaS" and "Web Development" are closely related
+   - "AI/ML" and "Data Science" are closely related
+   - "FinTech" and "Banking" are the same domain
+
+4. **location** (0-100): Does the location match?
+   - Remote jobs = 100 (location doesn't matter)
+   - Same country = 100
+   - Willing to relocate = 70-80
+   - Different country, not willing to relocate, onsite = 20-30
+
+Then calculate the overall score as a weighted average:
+- skills: ${100 - (jobMatrix.experience_weight || 20) - (jobMatrix.location_weight || 15) - (jobMatrix.domain_weight || 10)}% weight
+- experience: ${jobMatrix.experience_weight || 20}% weight
+- domain: ${jobMatrix.domain_weight || 10}% weight
+- location: ${jobMatrix.location_weight || 15}% weight
+
+Also provide:
+- A 2-3 sentence natural language explanation of why this candidate matches or doesn't match
+- A list of gaps (missing skills, experience shortfalls, etc.)
+
+Return a JSON object with this EXACT structure:
+{
+  "score": 75,
+  "breakdown": {
+    "skills": 80,
+    "experience": 70,
+    "domain": 85,
+    "location": 100
+  },
+  "explanation": "The candidate demonstrates strong skills in X and Y which align well with the job requirements...",
+  "gaps": [
+    {"type": "skill", "description": "Missing experience with X", "severity": "minor"},
+    {"type": "experience", "description": "2 years less than required", "severity": "moderate"}
+  ]
+}
+
+IMPORTANT RULES:
+- Be GENEROUS with semantic skill matching. If a candidate has "Python" + "Deep Learning" + "NLP", they ARE relevant for a "GenAI Engineer" job even if they don't list "GenAI" explicitly.
+- Consider the WHOLE profile holistically — a candidate with strong AI/ML foundations is a great fit for GenAI even without that exact buzzword
+- Return ONLY valid JSON, no additional text or markdown formatting.`;
+
+    try {
+      const responseJson = await this.callQwen(prompt, true);
+      console.log(`[Qwen] Raw match evaluation response: ${responseJson.substring(0, 500)}`);
+      
+      let parsed: any;
+      try {
+        parsed = JSON.parse(responseJson);
+      } catch (parseError: any) {
+        console.warn(`[Qwen] Initial parse failed, trying to clean response: ${parseError.message}`);
+        let cleanedResponse = responseJson.trim();
+        if (cleanedResponse.startsWith('```json')) {
+          cleanedResponse = cleanedResponse.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+        } else if (cleanedResponse.startsWith('```')) {
+          cleanedResponse = cleanedResponse.replace(/^```\s*/, '').replace(/\s*```$/, '');
+        }
+        parsed = JSON.parse(cleanedResponse);
+      }
+      
+      console.log(`[Qwen] LLM Match evaluation result:`, {
+        score: parsed.score,
+        breakdown: parsed.breakdown,
+        explanation: parsed.explanation?.substring(0, 100) + '...',
+        gapsCount: parsed.gaps?.length || 0,
+      });
+      
+      // Validate and clamp scores
+      const clamp = (v: number) => Math.min(100, Math.max(0, Math.round(v || 0)));
+      
+      return {
+        score: clamp(parsed.score),
+        breakdown: {
+          skills: clamp(parsed.breakdown?.skills),
+          experience: clamp(parsed.breakdown?.experience),
+          domain: clamp(parsed.breakdown?.domain),
+          location: clamp(parsed.breakdown?.location),
+        },
+        explanation: parsed.explanation || 'No explanation available.',
+        gaps: Array.isArray(parsed.gaps) ? parsed.gaps : [],
+      };
+    } catch (error: any) {
+      console.error('[Qwen] Failed to evaluate match via LLM:', error.message);
+      // Return null to signal fallback to deterministic scoring
+      throw error;
+    }
+  }
+
   async generateMatchExplanation(
     candidateProfile: any,
     jobRequirements: any,
     score: number
   ): Promise<{ explanation: string; gaps: any[] }> {
-    // Check if candidate is an intern
-    const candidateRoles = candidateProfile.roles || [];
-    const candidateIsIntern = Array.isArray(candidateRoles) && 
-      candidateRoles.some((role: string) => 
-        role && typeof role === 'string' && 
-        /intern|internship|trainee|apprentice|student/i.test(role)
-      );
-    
-    // Check if job is an internship
-    const jobIsInternship = jobRequirements.minYearsExperience === 0 || 
-      (jobRequirements.seniorityLevel && 
-       /intern|internship/i.test(jobRequirements.seniorityLevel));
-
     const prompt = `Candidate Profile:
 Skills: ${JSON.stringify(candidateProfile.skills)}
 Experience: ${candidateProfile.totalYearsExperience} years
@@ -456,29 +657,6 @@ Seniority Level: ${jobRequirements.seniorityLevel || 'not specified'}
 
 Match Score: ${score}
 
-MATCHING CONTEXT RULES:
-1. Intern-to-Intern Matching:
-   - If candidate role contains "Intern" AND job seniorityLevel is "internship" → this is a GOOD match
-   - Intern candidates with 0-2 years experience are appropriate for internships
-   - Don't penalize for having some internship experience (1 year as intern is different from 1 year as senior engineer)
-   - Focus on learning potential, not perfect skill match
-
-2. Experience Interpretation:
-   - 1 year as "Data Analyst Intern" is different from 1 year as "Senior Data Analyst"
-   - Consider the role context when evaluating experience
-   - For internships, some experience (0-2 years) is acceptable and even positive
-
-3. Skills for Internships:
-   - Internships may have more lenient skill requirements
-   - Focus on learning potential and basic knowledge, not advanced expertise
-   - Having some relevant skills is more important than having all skills perfectly
-
-4. If candidate is intern but job is not:
-   - Explain why they might be underqualified (but don't reject outright if they have relevant skills)
-
-5. If job is internship but candidate is not:
-   - Explain why they might be overqualified (unless they explicitly want to switch careers)
-
 Generate a natural language explanation (2-3 sentences) of why this candidate matches (or doesn't match) this job. Also identify any gaps (missing skills, insufficient experience, etc.).
 
 Return a JSON object:
@@ -493,15 +671,11 @@ Return ONLY valid JSON, no additional text.`;
 
     try {
       const responseJson = await this.callQwen(prompt, true);
-      console.log(`[Qwen] Raw match explanation response: ${responseJson.substring(0, 500)}`);
       
       let parsed: any;
       try {
-        // callQwen with jsonMode=true returns a JSON string, so parse it
         parsed = JSON.parse(responseJson);
       } catch (parseError: any) {
-        console.warn(`[Qwen] Initial parse failed, trying to clean response: ${parseError.message}`);
-        // Try to clean markdown code blocks if present
         let cleanedResponse = responseJson.trim();
         if (cleanedResponse.startsWith('```json')) {
           cleanedResponse = cleanedResponse.replace(/^```json\s*/, '').replace(/\s*```$/, '');
@@ -511,20 +685,12 @@ Return ONLY valid JSON, no additional text.`;
         parsed = JSON.parse(cleanedResponse);
       }
       
-      console.log(`[Qwen] Parsed match explanation:`, {
-        explanation: parsed.explanation?.substring(0, 100) + '...',
-        gapsCount: parsed.gaps?.length || 0,
-      });
-      
-      // Ensure we have valid structure
       return {
         explanation: parsed.explanation || 'No explanation available.',
         gaps: Array.isArray(parsed.gaps) ? parsed.gaps : [],
       };
     } catch (error: any) {
       console.error('[Qwen] Failed to generate match explanation:', error);
-      console.error('[Qwen] Error details:', error.message);
-      // Return default values on error
       return {
         explanation: 'Unable to generate explanation at this time.',
         gaps: [],

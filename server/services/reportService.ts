@@ -58,10 +58,10 @@ export class ReportService {
       order: [['score', 'DESC']],
     });
 
-    // Filter out low-quality matches (score < 45)
+    // Filter out low-quality matches (score < 35)
     const validMatches = matches.filter((m: any) => {
       const score = typeof m.score === 'number' ? m.score : 0;
-      return score >= 45;
+      return score >= 35;
     });
 
     // Calculate statistics

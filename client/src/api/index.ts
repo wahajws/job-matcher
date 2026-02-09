@@ -84,8 +84,8 @@ export async function getCandidateMatrix(candidateId: string) {
   return apiGet(`/candidates/${candidateId}/matrix`);
 }
 
-export async function rerunMatching(candidateId: string): Promise<void> {
-  await apiPost(`/candidates/${candidateId}/rerun-matching`);
+export async function rerunMatching(candidateId: string, regenerateMatrix: boolean = false): Promise<void> {
+  await apiPost(`/candidates/${candidateId}/rerun-matching`, { regenerateMatrix });
 }
 
 // ==================== JOBS ====================

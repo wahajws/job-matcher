@@ -18,10 +18,10 @@ export class MatchController extends BaseController {
         order: [['score', 'DESC']],
       });
 
-      // Filter out low-quality matches (score < 45)
+      // Filter out low-quality matches (score < 35)
       const filteredMatches = matches.filter((m: any) => {
         const score = typeof m.score === 'number' ? m.score : 0;
-        return score >= 45; // Only show matches with score >= 45
+        return score >= 35; // Only show matches with score >= 35 (LLM scoring is more nuanced)
       });
 
       return filteredMatches.map((m: any) => ({
@@ -123,60 +123,93 @@ export class MatchController extends BaseController {
         return;
       }
 
-      // STRICT FILTERING: Check if candidate should be considered at all
-      const shouldConsider = matchingService.shouldConsiderCandidate(
-        candidateMatrix,
-        jobMatrix,
-        candidateMatrix.total_years_experience,
-        (job as any).min_years_experience,
-        (job as any).seniority_level as 'junior' | 'mid' | 'senior' | 'lead' | 'principal',
-        candidate.headline, // candidate headline (e.g., "Data Analyst Intern")
-        candidateMatrix.roles // candidate roles array
-      );
-      
-      if (!shouldConsider) {
-        // Candidate doesn't meet basic requirements - don't create match
-        console.log(`[MatchController] Skipping candidate ${candidateId} for job ${jobId} - doesn't meet basic requirements`);
-        return;
+      console.log(`[MatchController] Evaluating match: candidate="${candidate.name}" (${candidateId}) vs job="${job.title}" (${jobId})`);
+
+      // ===== LLM-BASED MATCHING (Primary) =====
+      // Use Qwen to semantically evaluate the match — handles GenAI ≈ LLM ≈ AI etc.
+      let score: number;
+      let breakdown: any;
+      let explanation: string;
+      let gaps: any[];
+
+      try {
+        const llmResult = await qwenService.evaluateMatch(
+          candidateMatrix,
+          jobMatrix,
+          {
+            title: job.title,
+            description: job.description || '',
+            department: job.department,
+            seniorityLevel: (job as any).seniority_level,
+            minYearsExperience: (job as any).min_years_experience,
+            locationType: job.location_type,
+            country: job.country,
+          },
+          {
+            name: candidate.name,
+            headline: candidate.headline,
+            country: candidate.country,
+            roles: candidateMatrix.roles,
+          }
+        );
+
+        score = llmResult.score;
+        breakdown = llmResult.breakdown;
+        explanation = llmResult.explanation;
+        gaps = llmResult.gaps;
+        
+        console.log(`[MatchController] LLM score for ${candidate.name} vs ${job.title}: ${score} (skills=${breakdown.skills}, exp=${breakdown.experience}, domain=${breakdown.domain}, loc=${breakdown.location})`);
+      } catch (llmError: any) {
+        // ===== DETERMINISTIC FALLBACK =====
+        console.warn(`[MatchController] LLM evaluation failed, falling back to deterministic scoring: ${llmError.message}`);
+        
+        const deterministicResult = matchingService.calculateMatchScore(
+          candidateMatrix,
+          jobMatrix,
+          candidate.country,
+          job.country,
+          job.location_type as 'onsite' | 'hybrid' | 'remote',
+          (job as any).min_years_experience,
+          (job as any).seniority_level as 'junior' | 'mid' | 'senior' | 'lead' | 'principal',
+          candidate.headline,
+          candidateMatrix.roles,
+          job.title,
+          job.department,
+          job.description,
+        );
+
+        score = deterministicResult.score;
+        breakdown = deterministicResult.breakdown;
+
+        // Generate explanation separately
+        try {
+          const explResult = await qwenService.generateMatchExplanation(
+            {
+              skills: candidateMatrix.skills,
+              totalYearsExperience: candidateMatrix.total_years_experience,
+              domains: candidateMatrix.domains,
+              locationSignals: candidateMatrix.location_signals,
+            },
+            {
+              requiredSkills: jobMatrix.required_skills,
+              preferredSkills: jobMatrix.preferred_skills,
+              minYearsExperience: (job as any).min_years_experience,
+            },
+            score
+          );
+          explanation = explResult.explanation;
+          gaps = explResult.gaps;
+        } catch {
+          explanation = 'Match scored using deterministic algorithm.';
+          gaps = [];
+        }
       }
 
-      // Calculate score with location matching, experience matching, and domain matching
-      const { score, breakdown } = matchingService.calculateMatchScore(
-        candidateMatrix,
-        jobMatrix,
-        candidate.country, // candidate country
-        job.country, // job country
-        job.location_type as 'onsite' | 'hybrid' | 'remote', // job location type
-        (job as any).min_years_experience, // job minimum years experience
-        (job as any).seniority_level as 'junior' | 'mid' | 'senior' | 'lead' | 'principal', // job seniority level
-        candidate.headline, // candidate headline for intern detection
-        candidateMatrix.roles, // candidate roles for intern detection
-        job.title, // job title for domain matching
-        job.department, // job department for domain matching
-        job.description, // job description for domain matching
-      );
-      
-      // STRICT: Only create match if score is above minimum threshold (45)
-      if (score < 45) {
+      // Only create match if score is above minimum threshold (35 for LLM, since LLM is more nuanced)
+      if (score < 35) {
         console.log(`[MatchController] Skipping candidate ${candidateId} for job ${jobId} - score too low: ${score}`);
         return;
       }
-
-      // Generate explanation and gaps using Qwen
-      const { explanation, gaps } = await qwenService.generateMatchExplanation(
-        {
-          skills: candidateMatrix.skills,
-          totalYearsExperience: candidateMatrix.total_years_experience,
-          domains: candidateMatrix.domains,
-          locationSignals: candidateMatrix.location_signals,
-        },
-        {
-          requiredSkills: jobMatrix.required_skills,
-          preferredSkills: jobMatrix.preferred_skills,
-          minYearsExperience: (job as any).min_years_experience,
-        },
-        score
-      );
 
       // Upsert match
       const [match] = await Match.findOrCreate({
@@ -206,6 +239,8 @@ export class MatchController extends BaseController {
           calculated_at: new Date(),
         });
       }
+      
+      console.log(`[MatchController] ✓ Match saved: ${candidate.name} vs ${job.title} = ${score}%`);
     } catch (error: any) {
       console.error('Match calculation failed:', error);
     }

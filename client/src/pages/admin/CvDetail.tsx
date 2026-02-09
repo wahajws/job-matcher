@@ -104,13 +104,20 @@ export default function CvDetail() {
   });
 
   const rerunMatchingMutation = useMutation({
-    mutationFn: () => rerunMatching(candidateId),
+    mutationFn: (regenerateMatrix: boolean = false) => rerunMatching(candidateId, regenerateMatrix),
     onSuccess: () => {
-      toast({ title: 'Matching recalculation started', description: 'Matches will update shortly. Refresh the page in a few seconds.' });
-      // Refetch matches after a delay to allow backend processing
+      toast({ title: 'AI matching started', description: 'LLM is evaluating matches. Results will appear in 10-30 seconds.' });
+      // Refetch matches after delays to allow LLM processing
       setTimeout(() => {
         queryClient.invalidateQueries({ queryKey: ['/api/candidates', candidateId, 'matches'] });
-      }, 3000);
+      }, 5000);
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['/api/candidates', candidateId, 'matches'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/candidates', candidateId] });
+      }, 15000);
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['/api/candidates', candidateId, 'matches'] });
+      }, 30000);
     },
     onError: () => {
       toast({ title: 'Failed to recalculate matches', variant: 'destructive' });
@@ -295,17 +302,30 @@ export default function CvDetail() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle className="text-base">Job Matches</CardTitle>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => rerunMatchingMutation.mutate()}
-                disabled={rerunMatchingMutation.isPending}
-                className="gap-2"
-                data-testid="button-recalculate-matches"
-              >
-                <RefreshCw className={`w-4 h-4 ${rerunMatchingMutation.isPending ? 'animate-spin' : ''}`} />
-                {rerunMatchingMutation.isPending ? 'Calculating...' : 'Recalculate Matches'}
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => rerunMatchingMutation.mutate(false)}
+                  disabled={rerunMatchingMutation.isPending}
+                  className="gap-2"
+                  data-testid="button-recalculate-matches"
+                >
+                  <RefreshCw className={`w-4 h-4 ${rerunMatchingMutation.isPending ? 'animate-spin' : ''}`} />
+                  {rerunMatchingMutation.isPending ? 'Matching...' : 'Recalculate'}
+                </Button>
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={() => rerunMatchingMutation.mutate(true)}
+                  disabled={rerunMatchingMutation.isPending}
+                  className="gap-2"
+                  data-testid="button-deep-rematch"
+                >
+                  <RefreshCw className={`w-4 h-4 ${rerunMatchingMutation.isPending ? 'animate-spin' : ''}`} />
+                  {rerunMatchingMutation.isPending ? 'Processing...' : 'Deep Rematch (AI)'}
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               {matchesLoading ? (
@@ -315,18 +335,31 @@ export default function CvDetail() {
                   ))}
                 </div>
               ) : matches?.length === 0 ? (
-                <div className="text-center py-8">
-                  <p className="text-muted-foreground mb-3">No job matches found</p>
-                  <Button
-                    variant="default"
-                    size="sm"
-                    onClick={() => rerunMatchingMutation.mutate()}
-                    disabled={rerunMatchingMutation.isPending}
-                    className="gap-2"
-                  >
-                    <RefreshCw className={`w-4 h-4 ${rerunMatchingMutation.isPending ? 'animate-spin' : ''}`} />
-                    {rerunMatchingMutation.isPending ? 'Calculating...' : 'Calculate Matches Now'}
-                  </Button>
+                <div className="text-center py-8 space-y-3">
+                  <p className="text-muted-foreground">No job matches found</p>
+                  <p className="text-sm text-muted-foreground">Use "Deep Rematch" to re-analyze the CV with AI and match against all jobs</p>
+                  <div className="flex justify-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => rerunMatchingMutation.mutate(false)}
+                      disabled={rerunMatchingMutation.isPending}
+                      className="gap-2"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${rerunMatchingMutation.isPending ? 'animate-spin' : ''}`} />
+                      {rerunMatchingMutation.isPending ? 'Matching...' : 'Quick Recalculate'}
+                    </Button>
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={() => rerunMatchingMutation.mutate(true)}
+                      disabled={rerunMatchingMutation.isPending}
+                      className="gap-2"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${rerunMatchingMutation.isPending ? 'animate-spin' : ''}`} />
+                      {rerunMatchingMutation.isPending ? 'Processing...' : 'Deep Rematch (AI)'}
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-2">

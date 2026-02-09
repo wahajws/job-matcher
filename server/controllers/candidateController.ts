@@ -824,14 +824,18 @@ export class CandidateController extends BaseController {
   async rerunMatching(req: Request, res: Response) {
     await this.handleRequest(req, res, async () => {
       const candidateId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const regenerateMatrix = req.query.regenerateMatrix === 'true' || req.body?.regenerateMatrix === true;
 
       if (!candidateId) {
         throw new Error('Candidate ID is required');
       }
 
-      // Verify candidate exists and has a matrix
+      // Verify candidate exists
       const candidate = await Candidate.findByPk(candidateId, {
-        include: [{ model: CandidateMatrix, as: 'matrices', required: false }],
+        include: [
+          { model: CandidateMatrix, as: 'matrices', required: false },
+          { model: CvFile, as: 'cvFile', required: false },
+        ],
       });
 
       if (!candidate) {
@@ -847,16 +851,49 @@ export class CandidateController extends BaseController {
         throw error;
       }
 
-      console.log(`[CandidateController] Re-running matching for candidate ${candidateId} (${candidate.name})`);
+      console.log(`[CandidateController] Re-running matching for candidate ${candidateId} (${candidate.name}), regenerateMatrix=${regenerateMatrix}`);
 
-      // Trigger match calculation in background
-      this.triggerMatchCalculationForAllJobs(candidateId).then(() => {
-        console.log(`[CandidateController] ✓ Matching complete for candidate ${candidateId}`);
-      }).catch((err) => {
-        console.error(`[CandidateController] ✗ Matching failed for candidate ${candidateId}:`, err);
-      });
+      // Trigger the full pipeline in background
+      (async () => {
+        try {
+          // Step 1: Optionally regenerate the candidate matrix with improved LLM prompt
+          if (regenerateMatrix) {
+            const cvFile = (candidate as any).cvFile;
+            if (cvFile && cvFile.raw_text) {
+              console.log(`[CandidateController] Step 1: Regenerating candidate matrix via LLM...`);
+              const newMatrix = await qwenService.generateCandidateMatrix(cvFile.raw_text);
+              
+              // Update existing matrix
+              const existingMatrix = matrices[0];
+              await existingMatrix.update({
+                skills: newMatrix.skills || [],
+                roles: newMatrix.roles || [],
+                total_years_experience: newMatrix.totalYearsExperience || 0,
+                domains: newMatrix.domains || [],
+                education: newMatrix.education || [],
+                languages: newMatrix.languages || [],
+                location_signals: newMatrix.locationSignals || {},
+                evidence: newMatrix.evidence || [],
+                confidence: newMatrix.confidence || 0,
+                generated_at: new Date(),
+              });
+              
+              console.log(`[CandidateController] ✓ Matrix regenerated with ${newMatrix.skills?.length || 0} skills, ${newMatrix.domains?.length || 0} domains`);
+            } else {
+              console.warn(`[CandidateController] Cannot regenerate matrix: no CV text available`);
+            }
+          }
 
-      return { message: 'Matching re-run initiated', candidateId };
+          // Step 2: Calculate matches against all jobs using LLM
+          console.log(`[CandidateController] Step 2: Running LLM-based matching against all jobs...`);
+          await this.triggerMatchCalculationForAllJobs(candidateId);
+          console.log(`[CandidateController] ✓ Matching complete for candidate ${candidateId}`);
+        } catch (err) {
+          console.error(`[CandidateController] ✗ Re-run failed for candidate ${candidateId}:`, err);
+        }
+      })();
+
+      return { message: 'Matching re-run initiated (LLM-based evaluation)', candidateId, regenerateMatrix };
     });
   }
 }
