@@ -8,7 +8,7 @@ export interface ReportStatistics {
     '80-89': number;
     '70-79': number;
     '60-69': number;
-    '30-59': number;
+    '45-59': number;
   };
   topSkills: Array<{ skill: string; count: number }>;
   experienceDistribution: {
@@ -58,10 +58,10 @@ export class ReportService {
       order: [['score', 'DESC']],
     });
 
-    // Filter out low-quality matches (score < 30)
+    // Filter out low-quality matches (score < 45)
     const validMatches = matches.filter((m: any) => {
       const score = typeof m.score === 'number' ? m.score : 0;
-      return score >= 30;
+      return score >= 45;
     });
 
     // Calculate statistics
@@ -101,7 +101,7 @@ export class ReportService {
       return {
         totalMatches: 0,
         averageScore: 0,
-        scoreDistribution: { '90-100': 0, '80-89': 0, '70-79': 0, '60-69': 0, '30-59': 0 },
+        scoreDistribution: { '90-100': 0, '80-89': 0, '70-79': 0, '60-69': 0, '45-59': 0 },
         topSkills: [],
         experienceDistribution: { '0-2': 0, '3-5': 0, '6-10': 0, '11+': 0 },
         locationDistribution: {},
@@ -119,7 +119,7 @@ export class ReportService {
       '80-89': 0,
       '70-79': 0,
       '60-69': 0,
-      '30-59': 0,
+      '45-59': 0,
     };
 
     scores.forEach((score) => {
@@ -127,7 +127,7 @@ export class ReportService {
       else if (score >= 80) scoreDistribution['80-89']++;
       else if (score >= 70) scoreDistribution['70-79']++;
       else if (score >= 60) scoreDistribution['60-69']++;
-      else scoreDistribution['30-59']++;
+      else scoreDistribution['45-59']++;
     });
 
     // Top skills (from candidate matrices)

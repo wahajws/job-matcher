@@ -398,11 +398,24 @@ Return a JSON object with this exact structure:
   "domainWeight": 10
 }
 
-IMPORTANT for skill weights:
-- For internships: Skills may have lower weights (60-75) as internships are learning opportunities
-- For internships: Consider that candidates may have basic knowledge rather than advanced expertise
-- For full-time roles: Use higher weights (80-95) for critical skills
-- Adjust weights based on job seniority level (internship < junior < mid < senior)
+CRITICAL RULES for skill weights:
+1. The "weight" field (0-100) indicates how IMPORTANT each skill is for THIS specific job
+2. CORE/PRIMARY skills (the main technology the job revolves around) MUST have weight 85-95
+   - Example: For a "React Native Developer" job, "React Native" should be weight 95
+   - Example: For a "Python Data Engineer" job, "Python" should be weight 90
+3. SECONDARY skills (supporting technologies) should have weight 60-80
+   - Example: For a "React Native Developer" job, "Redux" might be weight 75, "REST APIs" weight 70
+4. GENERIC/COMMON skills (tools everyone knows) should have weight 30-50
+   - Example: "Git" = weight 30, "Agile" = weight 35, "Communication" = weight 20
+5. Do NOT give high weights to soft skills (Communication, Teamwork, Problem Solving)
+6. Do NOT include pure soft skills in requiredSkills — only include technical skills
+7. Use EXACT technology names — distinguish between related but different technologies:
+   - "React" (web framework) is DIFFERENT from "React Native" (mobile framework)
+   - "Angular" (v2+) is DIFFERENT from "AngularJS" (v1)
+   - "Node.js" is DIFFERENT from "Deno"
+   - Keep specific: use "React Native" not just "React" if the job is for mobile
+8. For internships: Skills may have lower weights (50-70) as internships are learning opportunities
+9. For senior roles: Core skills should have higher weights (90-95)
 
 Return ONLY valid JSON, no additional text.`;
 

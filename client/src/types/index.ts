@@ -182,7 +182,7 @@ export interface ReportStatistics {
     '80-89': number;
     '70-79': number;
     '60-69': number;
-    '30-59': number;
+    '45-59': number;
   };
   topSkills: Array<{ skill: string; count: number }>;
   experienceDistribution: {

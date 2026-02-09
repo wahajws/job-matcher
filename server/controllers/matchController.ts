@@ -18,10 +18,10 @@ export class MatchController extends BaseController {
         order: [['score', 'DESC']],
       });
 
-      // Filter out low-quality matches (score < 30)
+      // Filter out low-quality matches (score < 45)
       const filteredMatches = matches.filter((m: any) => {
         const score = typeof m.score === 'number' ? m.score : 0;
-        return score >= 30; // Only show matches with score >= 30
+        return score >= 45; // Only show matches with score >= 45
       });
 
       return filteredMatches.map((m: any) => ({
@@ -140,7 +140,7 @@ export class MatchController extends BaseController {
         return;
       }
 
-      // Calculate score with location matching and experience matching
+      // Calculate score with location matching, experience matching, and domain matching
       const { score, breakdown } = matchingService.calculateMatchScore(
         candidateMatrix,
         jobMatrix,
@@ -150,11 +150,14 @@ export class MatchController extends BaseController {
         (job as any).min_years_experience, // job minimum years experience
         (job as any).seniority_level as 'junior' | 'mid' | 'senior' | 'lead' | 'principal', // job seniority level
         candidate.headline, // candidate headline for intern detection
-        candidateMatrix.roles // candidate roles for intern detection
+        candidateMatrix.roles, // candidate roles for intern detection
+        job.title, // job title for domain matching
+        job.department, // job department for domain matching
+        job.description, // job description for domain matching
       );
       
-      // STRICT: Only create match if score is above minimum threshold (30)
-      if (score < 30) {
+      // STRICT: Only create match if score is above minimum threshold (45)
+      if (score < 45) {
         console.log(`[MatchController] Skipping candidate ${candidateId} for job ${jobId} - score too low: ${score}`);
         return;
       }
