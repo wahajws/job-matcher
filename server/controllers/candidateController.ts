@@ -823,12 +823,40 @@ export class CandidateController extends BaseController {
 
   async rerunMatching(req: Request, res: Response) {
     await this.handleRequest(req, res, async () => {
-      const { id } = req.params;
+      const candidateId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
 
-      // Trigger match recalculation for this candidate
-      // This would typically trigger a background job
-      // For now, just return success
-      return { message: 'Matching re-run initiated' };
+      if (!candidateId) {
+        throw new Error('Candidate ID is required');
+      }
+
+      // Verify candidate exists and has a matrix
+      const candidate = await Candidate.findByPk(candidateId, {
+        include: [{ model: CandidateMatrix, as: 'matrices', required: false }],
+      });
+
+      if (!candidate) {
+        const error: any = new Error('Candidate not found');
+        error.status = 404;
+        throw error;
+      }
+
+      const matrices = (candidate as any).matrices;
+      if (!matrices || matrices.length === 0) {
+        const error: any = new Error('Candidate has no matrix. CV must be processed first.');
+        error.status = 400;
+        throw error;
+      }
+
+      console.log(`[CandidateController] Re-running matching for candidate ${candidateId} (${candidate.name})`);
+
+      // Trigger match calculation in background
+      this.triggerMatchCalculationForAllJobs(candidateId).then(() => {
+        console.log(`[CandidateController] ✓ Matching complete for candidate ${candidateId}`);
+      }).catch((err) => {
+        console.error(`[CandidateController] ✗ Matching failed for candidate ${candidateId}:`, err);
+      });
+
+      return { message: 'Matching re-run initiated', candidateId };
     });
   }
 }

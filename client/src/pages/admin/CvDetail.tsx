@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRoute, Link } from 'wouter';
-import { getCandidate, getNotes, addNote, getMatchesForCandidate, updateCandidate } from '@/api';
+import { getCandidate, getNotes, addNote, getMatchesForCandidate, updateCandidate, rerunMatching } from '@/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -44,6 +44,7 @@ import {
   Send,
   Briefcase,
   Edit,
+  RefreshCw,
 } from 'lucide-react';
 
 export default function CvDetail() {
@@ -99,6 +100,20 @@ export default function CvDetail() {
       queryClient.invalidateQueries({ queryKey: ['/api/candidates', candidateId] });
       setNewTag('');
       toast({ title: 'Tag added' });
+    },
+  });
+
+  const rerunMatchingMutation = useMutation({
+    mutationFn: () => rerunMatching(candidateId),
+    onSuccess: () => {
+      toast({ title: 'Matching recalculation started', description: 'Matches will update shortly. Refresh the page in a few seconds.' });
+      // Refetch matches after a delay to allow backend processing
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['/api/candidates', candidateId, 'matches'] });
+      }, 3000);
+    },
+    onError: () => {
+      toast({ title: 'Failed to recalculate matches', variant: 'destructive' });
     },
   });
 
@@ -278,8 +293,19 @@ export default function CvDetail() {
 
         <TabsContent value="matches">
           <Card>
-            <CardHeader>
+            <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle className="text-base">Job Matches</CardTitle>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => rerunMatchingMutation.mutate()}
+                disabled={rerunMatchingMutation.isPending}
+                className="gap-2"
+                data-testid="button-recalculate-matches"
+              >
+                <RefreshCw className={`w-4 h-4 ${rerunMatchingMutation.isPending ? 'animate-spin' : ''}`} />
+                {rerunMatchingMutation.isPending ? 'Calculating...' : 'Recalculate Matches'}
+              </Button>
             </CardHeader>
             <CardContent>
               {matchesLoading ? (
@@ -289,7 +315,19 @@ export default function CvDetail() {
                   ))}
                 </div>
               ) : matches?.length === 0 ? (
-                <p className="text-muted-foreground text-center py-8">No job matches found</p>
+                <div className="text-center py-8">
+                  <p className="text-muted-foreground mb-3">No job matches found</p>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => rerunMatchingMutation.mutate()}
+                    disabled={rerunMatchingMutation.isPending}
+                    className="gap-2"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${rerunMatchingMutation.isPending ? 'animate-spin' : ''}`} />
+                    {rerunMatchingMutation.isPending ? 'Calculating...' : 'Calculate Matches Now'}
+                  </Button>
+                </div>
               ) : (
                 <div className="space-y-2">
                   {matches?.map((match) => (
