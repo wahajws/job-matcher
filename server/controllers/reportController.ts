@@ -70,13 +70,29 @@ export class ReportController extends BaseController {
         throw new Error('Job ID is required');
       }
 
-      const report = await JobReport.findOne({
+      let report = await JobReport.findOne({
         where: { job_id: jobId, status: 'completed' },
         order: [['generated_at', 'DESC']],
       });
 
+      // Auto-generate report if none exists
       if (!report) {
-        throw new Error('Report not found. Please generate a report first.');
+        console.log(`[Report] No report found for job ${jobId}, auto-generating...`);
+        
+        // Check if job exists
+        const job = await Job.findByPk(jobId);
+        if (!job) {
+          throw new Error('Job not found');
+        }
+
+        const reportData = await reportService.generateJobReport(jobId);
+        report = await JobReport.create({
+          job_id: jobId,
+          report_data: reportData,
+          status: 'completed',
+          generated_at: new Date(),
+          generated_by: (req as any).user?.id,
+        });
       }
 
       return {
