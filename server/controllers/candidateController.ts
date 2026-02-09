@@ -834,7 +834,7 @@ export class CandidateController extends BaseController {
       const candidate = await Candidate.findByPk(candidateId, {
         include: [
           { model: CandidateMatrix, as: 'matrices', required: false },
-          { model: CvFile, as: 'cvFile', required: false },
+          { model: CvFile, as: 'cvFiles', required: false },
         ],
       });
 
@@ -858,7 +858,7 @@ export class CandidateController extends BaseController {
         try {
           // Step 1: Optionally regenerate the candidate matrix with improved LLM prompt
           if (regenerateMatrix) {
-            const cvFile = (candidate as any).cvFile;
+            const cvFile = (candidate as any).cvFiles?.[0];
             if (cvFile && cvFile.raw_text) {
               console.log(`[CandidateController] Step 1: Regenerating candidate matrix via LLM...`);
               const newMatrix = await qwenService.generateCandidateMatrix(cvFile.raw_text);
