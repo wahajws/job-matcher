@@ -21,7 +21,6 @@ import analyticsRoutes from "./routes/analytics.js";
 import savedJobRoutes from "./routes/savedJobs.js";
 import teamRoutes from "./routes/team.js";
 import aiRoutes from "./routes/ai.js";
-import { apiLimiter } from "./middleware/rateLimit.js";
 import { sanitizeStrings } from "./middleware/validate.js";
 
 export async function registerRoutes(
@@ -31,8 +30,7 @@ export async function registerRoutes(
   // Serve uploaded files (photos, logos) as static
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
-  // Global API rate limiter & XSS sanitizer
-  app.use("/api", apiLimiter);
+  // Global XSS sanitizer
   app.use("/api", sanitizeStrings);
 
   // Register all API routes
