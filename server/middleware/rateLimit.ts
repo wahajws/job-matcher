@@ -108,7 +108,7 @@ export const registerLimiter = createRateLimiter({
 export const apiLimiter = createRateLimiter({
   name: 'api',
   windowMs: 60 * 1000, // 1 minute
-  max: 120,
+  max: 600,
   message: 'Too many API requests. Please slow down.',
   keyByUser: true,
 });
