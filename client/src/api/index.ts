@@ -1,6 +1,8 @@
-import { apiGet, apiPost, apiPut, apiDelete, apiUpload, setAuthToken } from '@/lib/apiClient';
+import { apiGet, apiPost, apiPut, apiPatch, apiDelete, apiUpload, setAuthToken } from '@/lib/apiClient';
 import type {
   Candidate,
+  CandidateProfile,
+  CompanyProfile,
   Job,
   MatchResult,
   AdminNote,
@@ -9,11 +11,47 @@ import type {
   CvStatus,
   User,
   JobReport,
+  Role,
+  Application,
+  ApplicationStatus,
+  BrowseJobsResponse,
+  CompanyStats,
+  PipelineStage,
+  JobPipeline,
+  AppNotification,
+  NotificationListResponse,
+  ApplicationHistoryEntry,
+  ConversationPreview,
+  MessagesResponse,
+  ChatMessage,
+  SavedJobEntry,
+  CompanyAnalytics,
+  CandidateAnalytics,
+  AdminAnalytics,
+  TeamMember,
+  PrivacySettings,
+  MemberRole,
 } from '@/types';
 
 // ==================== AUTH ====================
-export async function login(username: string, password: string): Promise<{ token: string; user: User }> {
-  const response = await apiPost<{ token: string; user: User }>('/auth/login', { username, password });
+export async function register(data: {
+  email: string;
+  password: string;
+  name: string;
+  role: 'candidate' | 'company';
+}): Promise<{ token: string; user: User }> {
+  const response = await apiPost<{ token: string; user: User }>('/auth/register', data);
+  if (response.token) {
+    setAuthToken(response.token);
+  }
+  return response;
+}
+
+export async function login(emailOrUsername: string, password: string): Promise<{ token: string; user: User }> {
+  const response = await apiPost<{ token: string; user: User }>('/auth/login', {
+    email: emailOrUsername,
+    password,
+  });
   if (response.token) {
     setAuthToken(response.token);
   }
@@ -29,7 +67,37 @@ export async function getCurrentUser(): Promise<User> {
   return apiGet<User>('/auth/me');
 }
 
-// ==================== CANDIDATES ====================
+// ==================== CANDIDATE PROFILE (self) ====================
+export async function getCandidateProfile(): Promise<CandidateProfile> {
+  return apiGet<CandidateProfile>('/candidate/profile');
+}
+
+export async function updateCandidateProfile(data: Partial<CandidateProfile>): Promise<{ message: string }> {
+  return apiPut<{ message: string }>('/candidate/profile', data);
+}
+
+export async function uploadCandidatePhoto(file: File): Promise<{ photoUrl: string }> {
+  const formData = new FormData();
+  formData.append('photo', file);
+  return apiUpload<{ photoUrl: string }>('/candidate/profile/photo', formData);
+}
+
+// ==================== COMPANY PROFILE (self) ====================
+export async function getCompanyProfile(): Promise<CompanyProfile> {
+  return apiGet<CompanyProfile>('/company/profile');
+}
+
+export async function updateCompanyProfile(data: Partial<CompanyProfile>): Promise<{ message: string }> {
+  return apiPut<{ message: string }>('/company/profile', data);
+}
+
+export async function uploadCompanyLogo(file: File): Promise<{ logoUrl: string }> {
+  const formData = new FormData();
+  formData.append('logo', file);
+  return apiUpload<{ logoUrl: string }>('/company/profile/logo', formData);
+}
+
+// ==================== CANDIDATES (admin) ====================
 export async function listCandidates(filters?: {
   status?: CvStatus;
   country?: string;
@@ -144,6 +212,16 @@ export async function getJobMatrix(jobId: string) {
 
 export async function generateJobMatrix(jobId: string): Promise<void> {
   await apiPost(`/jobs/${jobId}/generate-matrix`);
+}
+
+export async function updateJobMatrix(jobId: string, matrix: {
+  requiredSkills: { skill: string; weight: number }[];
+  preferredSkills: { skill: string; weight: number }[];
+  experienceWeight: number;
+  locationWeight: number;
+  domainWeight: number;
+}) {
+  return apiPut(`/jobs/${jobId}/matrix`, matrix);
 }
 
 // ==================== REPORTS ====================
@@ -278,4 +356,349 @@ export async function getRecommendedJobs(candidateId: string): Promise<
   (MatchResult & { job?: Job })[]
 > {
   return getMatchesForCandidate(candidateId);
+}
+
+// ==================== JOB BROWSING (public / candidate) ====================
+export async function browseJobs(filters?: {
+  search?: string;
+  country?: string;
+  locationType?: string;
+  seniorityLevel?: string;
+  page?: number;
+  limit?: number;
+  sortBy?: string;
+}): Promise<BrowseJobsResponse> {
+  const params = new URLSearchParams();
+  if (filters?.search) params.append('search', filters.search);
+  if (filters?.country) params.append('country', filters.country);
+  if (filters?.locationType) params.append('locationType', filters.locationType);
+  if (filters?.seniorityLevel) params.append('seniorityLevel', filters.seniorityLevel);
+  if (filters?.page) params.append('page', filters.page.toString());
+  if (filters?.limit) params.append('limit', filters.limit.toString());
+  if (filters?.sortBy) params.append('sortBy', filters.sortBy);
+
+  const query = params.toString();
+  return apiGet<BrowseJobsResponse>(`/browse${query ? `?${query}` : ''}`);
+}
+
+export async function getJobPublic(id: string): Promise<Job & { match?: any; applicationStatus?: ApplicationStatus | null }> {
+  return apiGet(`/browse/${id}`);
+}
+
+// ==================== APPLICATIONS (candidate) ====================
+export async function applyToJob(jobId: string, coverLetter?: string): Promise<Application> {
+  return apiPost<Application>('/applications', { jobId, coverLetter });
+}
+
+export async function getMyApplications(status?: string): Promise<Application[]> {
+  const params = new URLSearchParams();
+  if (status && status !== 'all') params.append('status', status);
+  const query = params.toString();
+  return apiGet<Application[]>(`/applications/mine${query ? `?${query}` : ''}`);
+}
+
+export async function withdrawApplication(applicationId: string): Promise<{ message: string }> {
+  return apiPut<{ message: string }>(`/applications/${applicationId}/withdraw`);
+}
+
+// ==================== APPLICATIONS (company) ====================
+export async function getApplicationsForJob(jobId: string, filters?: {
+  status?: string;
+  sortBy?: string;
+}): Promise<Application[]> {
+  const params = new URLSearchParams();
+  if (filters?.status) params.append('status', filters.status);
+  if (filters?.sortBy) params.append('sortBy', filters.sortBy);
+  const query = params.toString();
+  return apiGet<Application[]>(`/applications/job/${jobId}${query ? `?${query}` : ''}`);
+}
+
+export async function updateApplicationStatus(applicationId: string, status: ApplicationStatus): Promise<{ message: string }> {
+  return apiPut<{ message: string }>(`/applications/${applicationId}/status`, { status });
+}
+
+export async function getCompanyStats(): Promise<CompanyStats> {
+  return apiGet<CompanyStats>('/applications/company-stats');
+}
+
+// ==================== COMPANY JOB MANAGEMENT ====================
+export async function getCompanyJobs(status?: string): Promise<Job[]> {
+  const params = new URLSearchParams();
+  if (status && status !== 'all') params.append('status', status);
+  const query = params.toString();
+  return apiGet<Job[]>(`/company/jobs${query ? `?${query}` : ''}`);
+}
+
+export async function getCompanyJob(id: string): Promise<Job> {
+  return apiGet<Job>(`/company/jobs/${id}`);
+}
+
+export async function createCompanyJob(jobData: {
+  title: string;
+  department?: string;
+  locationType?: string;
+  country?: string;
+  city?: string;
+  description: string;
+  mustHaveSkills?: string[];
+  niceToHaveSkills?: string[];
+  minYearsExperience?: number;
+  seniorityLevel?: string;
+  deadline?: string;
+  status?: string;
+}): Promise<Job> {
+  return apiPost<Job>('/company/jobs', jobData);
+}
+
+export async function updateCompanyJob(id: string, updates: Partial<Job>): Promise<Job> {
+  return apiPut<Job>(`/company/jobs/${id}`, updates);
+}
+
+// ==================== PIPELINE (company) ====================
+export async function getPipelineStages(): Promise<PipelineStage[]> {
+  return apiGet<PipelineStage[]>('/pipeline/stages');
+}
+
+export async function createPipelineStage(data: { name: string; color?: string; order?: number }): Promise<PipelineStage> {
+  return apiPost<PipelineStage>('/pipeline/stages', data);
+}
+
+export async function updatePipelineStage(id: string, data: { name?: string; color?: string; order?: number }): Promise<PipelineStage> {
+  return apiPut<PipelineStage>(`/pipeline/stages/${id}`, data);
+}
+
+export async function deletePipelineStage(id: string): Promise<{ message: string }> {
+  return apiDelete(`/pipeline/stages/${id}`) as Promise<{ message: string }>;
+}
+
+export async function reorderPipelineStages(stageIds: string[]): Promise<{ message: string }> {
+  return apiPut<{ message: string }>('/pipeline/stages/reorder', { stageIds });
+}
+
+export async function getJobPipeline(jobId: string): Promise<JobPipeline> {
+  return apiGet<JobPipeline>(`/pipeline/job/${jobId}`);
+}
+
+export async function moveApplicationInPipeline(applicationId: string, stageId: string, note?: string): Promise<any> {
+  const body: any = { stageId };
+  if (note) body.note = note;
+  return apiPatch(`/pipeline/applications/${applicationId}/move`, body);
+}
+
+export async function getApplicationHistory(applicationId: string): Promise<ApplicationHistoryEntry[]> {
+  return apiGet<ApplicationHistoryEntry[]>(`/pipeline/applications/${applicationId}/history`);
+}
+
+// ==================== NOTIFICATIONS ====================
+export async function getNotifications(params?: {
+  unreadOnly?: boolean;
+  page?: number;
+  limit?: number;
+}): Promise<NotificationListResponse> {
+  const qs = new URLSearchParams();
+  if (params?.unreadOnly) qs.append('unreadOnly', 'true');
+  if (params?.page) qs.append('page', params.page.toString());
+  if (params?.limit) qs.append('limit', params.limit.toString());
+  const query = qs.toString();
+  return apiGet<NotificationListResponse>(`/notifications${query ? `?${query}` : ''}`);
+}
+
+export async function getUnreadNotificationCount(): Promise<{ unreadCount: number }> {
+  return apiGet<{ unreadCount: number }>('/notifications/unread-count');
+}
+
+export async function markNotificationRead(id: string): Promise<{ message: string }> {
+  return apiPatch<{ message: string }>(`/notifications/${id}/read`);
+}
+
+export async function markAllNotificationsRead(): Promise<{ message: string }> {
+  return apiPatch<{ message: string }>('/notifications/read-all');
+}
+
+// ==================== CONVERSATIONS / MESSAGING ====================
+export async function getConversations(): Promise<ConversationPreview[]> {
+  return apiGet<ConversationPreview[]>('/conversations');
+}
+
+export async function getConversationMessages(conversationId: string, page?: number): Promise<MessagesResponse> {
+  const params = new URLSearchParams();
+  if (page) params.append('page', page.toString());
+  const query = params.toString();
+  return apiGet<MessagesResponse>(`/conversations/${conversationId}/messages${query ? `?${query}` : ''}`);
+}
+
+export async function sendMessage(conversationId: string, content: string): Promise<ChatMessage> {
+  return apiPost<ChatMessage>(`/conversations/${conversationId}/messages`, { content });
+}
+
+export async function createConversation(data: {
+  candidateUserId: string;
+  jobId?: string;
+  message?: string;
+}): Promise<{ id: string; isNew: boolean }> {
+  return apiPost<{ id: string; isNew: boolean }>('/conversations', data);
+}
+
+export async function getUnreadMessageCount(): Promise<{ unreadCount: number }> {
+  return apiGet<{ unreadCount: number }>('/conversations/unread-count');
+}
+
+// ==================== SAVED JOBS ====================
+export async function getSavedJobs(): Promise<SavedJobEntry[]> {
+  return apiGet<SavedJobEntry[]>('/saved-jobs');
+}
+
+export async function saveJob(jobId: string): Promise<{ message: string }> {
+  return apiPost<{ message: string }>('/saved-jobs', { jobId });
+}
+
+export async function unsaveJob(jobId: string): Promise<{ message: string }> {
+  return apiDelete<{ message: string }>(`/saved-jobs/${jobId}`);
+}
+
+export async function isJobSaved(jobId: string): Promise<{ saved: boolean }> {
+  return apiGet<{ saved: boolean }>(`/saved-jobs/${jobId}/check`);
+}
+
+// ==================== ANALYTICS ====================
+export async function getCompanyAnalytics(): Promise<CompanyAnalytics> {
+  return apiGet<CompanyAnalytics>('/analytics/company');
+}
+
+export async function getCandidateAnalytics(): Promise<CandidateAnalytics> {
+  return apiGet<CandidateAnalytics>('/analytics/candidate');
+}
+
+export async function getAdminAnalytics(): Promise<AdminAnalytics> {
+  return apiGet<AdminAnalytics>('/analytics/admin');
+}
+
+// ==================== TEAM MANAGEMENT ====================
+export async function getTeamMembers(): Promise<TeamMember[]> {
+  return apiGet<TeamMember[]>('/company/members');
+}
+
+export async function inviteTeamMember(email: string, role?: MemberRole): Promise<{ id: string; email: string; role: string; status: string }> {
+  return apiPost('/company/members/invite', { email, role: role || 'recruiter' });
+}
+
+export async function updateMemberRole(memberId: string, role: MemberRole): Promise<{ message: string }> {
+  return apiPatch<{ message: string }>(`/company/members/${memberId}/role`, { role });
+}
+
+export async function removeTeamMember(memberId: string): Promise<{ message: string }> {
+  return apiDelete<{ message: string }>(`/company/members/${memberId}`);
+}
+
+// ==================== PRIVACY SETTINGS ====================
+export async function getPrivacySettings(): Promise<PrivacySettings> {
+  return apiGet<PrivacySettings>('/candidate/profile/privacy');
+}
+
+export async function updatePrivacySettings(data: PrivacySettings): Promise<{ message: string }> {
+  return apiPut<{ message: string }>('/candidate/profile/privacy', data);
+}
+
+// ==================== TOKEN REFRESH ====================
+export async function refreshToken(): Promise<{ token: string }> {
+  return apiPost<{ token: string }>('/auth/refresh');
+}
+
+// ==================== AI-POWERED FEATURES (Phase 6) ====================
+import type {
+  CvReviewResult,
+  CvTailorResult,
+  CoverLetterResult,
+  CoverLetterTone,
+  JobPostingReviewResult,
+  GeneratedJobDescription,
+  InterviewQuestionsResult,
+  CandidateSummaryResult,
+  SkillGapAnalysisResult,
+  SalaryEstimateResult,
+  AiChatResponse,
+} from '@/types';
+
+// 6.1 — CV Review
+export async function reviewCv(targetRole?: string): Promise<CvReviewResult> {
+  return apiPost<CvReviewResult>('/ai/cv-review', { targetRole });
+}
+
+// 6.2 — CV Tailor
+export async function tailorCv(jobId: string): Promise<CvTailorResult> {
+  return apiPost<CvTailorResult>('/ai/tailor-cv', { jobId });
+}
+
+// 6.3 — Cover Letter
+export async function generateCoverLetter(
+  jobId: string,
+  tone?: CoverLetterTone
+): Promise<CoverLetterResult> {
+  return apiPost<CoverLetterResult>('/ai/cover-letter', { jobId, tone });
+}
+
+// 6.4 — Job Posting Review
+export async function reviewJobPosting(data: {
+  title: string;
+  description: string;
+  mustHaveSkills?: string[];
+  niceToHaveSkills?: string[];
+}): Promise<JobPostingReviewResult> {
+  return apiPost<JobPostingReviewResult>('/ai/review-job-posting', data);
+}
+
+// 6.5 — Job Description Generator
+export async function generateJobDescription(data: {
+  title: string;
+  skills?: string[];
+  seniorityLevel?: string;
+  locationType?: string;
+  industry?: string;
+}): Promise<GeneratedJobDescription> {
+  return apiPost<GeneratedJobDescription>('/ai/generate-job-description', data);
+}
+
+// 6.6 — Interview Questions
+export async function generateInterviewQuestions(data: {
+  jobId: string;
+  candidateId?: string;
+  questionTypes?: string[];
+  difficulty?: string;
+}): Promise<InterviewQuestionsResult> {
+  return apiPost<InterviewQuestionsResult>('/ai/interview-questions', data);
+}
+
+// 6.7 — Candidate Summary
+export async function generateCandidateSummary(
+  candidateId: string,
+  jobId: string
+): Promise<CandidateSummaryResult> {
+  return apiPost<CandidateSummaryResult>('/ai/candidate-summary', { candidateId, jobId });
+}
+
+// 6.8 — Skill Gap Analysis
+export async function analyzeSkillGaps(data: {
+  targetRole?: string;
+  targetJobIds?: string[];
+}): Promise<SkillGapAnalysisResult> {
+  return apiPost<SkillGapAnalysisResult>('/ai/skill-gap-analysis', data);
+}
+
+// 6.9 — Salary Estimator
+export async function estimateSalary(data: {
+  role: string;
+  skills?: string[];
+  yearsExperience?: number;
+  country: string;
+  city?: string;
+}): Promise<SalaryEstimateResult> {
+  return apiPost<SalaryEstimateResult>('/ai/salary-estimate', data);
+}
+
+// 6.10 — AI Chat
+export async function aiChat(
+  message: string,
+  conversationHistory?: { role: 'user' | 'assistant'; content: string }[]
+): Promise<AiChatResponse> {
+  return apiPost<AiChatResponse>('/ai/chat', { message, conversationHistory });
 }

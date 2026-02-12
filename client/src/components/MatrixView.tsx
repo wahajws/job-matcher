@@ -1,7 +1,11 @@
+import { useState } from 'react';
 import type { CandidateMatrix, JobMatrix } from '@/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Sparkles, GraduationCap, Globe, MapPin, Briefcase } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Slider } from '@/components/ui/slider';
+import { Sparkles, GraduationCap, Globe, MapPin, Briefcase, Pencil, Save, X, RotateCcw, Plus, Trash2, ArrowRightLeft } from 'lucide-react';
 
 interface CandidateMatrixViewProps {
   matrix: CandidateMatrix;
@@ -9,6 +13,14 @@ interface CandidateMatrixViewProps {
 
 interface JobMatrixViewProps {
   matrix: JobMatrix;
+  onSave?: (matrix: {
+    requiredSkills: { skill: string; weight: number }[];
+    preferredSkills: { skill: string; weight: number }[];
+    experienceWeight: number;
+    locationWeight: number;
+    domainWeight: number;
+  }) => Promise<void>;
+  saving?: boolean;
 }
 
 const skillLevelColors: Record<string, string> = {
@@ -167,12 +179,349 @@ export function CandidateMatrixView({ matrix }: CandidateMatrixViewProps) {
   );
 }
 
-export function JobMatrixView({ matrix }: JobMatrixViewProps) {
+// Editable skill row
+function EditableSkillRow({
+  skill,
+  weight,
+  color,
+  onSkillChange,
+  onWeightChange,
+  onRemove,
+  onMove,
+  moveLabel,
+}: {
+  skill: string;
+  weight: number;
+  color: string;
+  onSkillChange: (name: string) => void;
+  onWeightChange: (weight: number) => void;
+  onRemove: () => void;
+  onMove: () => void;
+  moveLabel: string;
+}) {
+  return (
+    <div className="flex items-center gap-2 group">
+      <Input
+        value={skill}
+        onChange={(e) => onSkillChange(e.target.value)}
+        className="h-7 text-sm flex-1 min-w-0"
+      />
+      <div className="flex items-center gap-1.5 shrink-0">
+        <div className="w-16">
+          <Slider
+            value={[weight]}
+            onValueChange={([v]) => onWeightChange(v)}
+            max={100}
+            min={0}
+            step={5}
+            className="w-full"
+          />
+        </div>
+        <span className="text-xs text-muted-foreground w-8 text-right">{weight}%</span>
+      </div>
+      <button
+        onClick={onMove}
+        className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-muted"
+        title={moveLabel}
+      >
+        <ArrowRightLeft className="w-3 h-3 text-muted-foreground" />
+      </button>
+      <button
+        onClick={onRemove}
+        className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-destructive/10"
+        title="Remove skill"
+      >
+        <Trash2 className="w-3 h-3 text-destructive" />
+      </button>
+    </div>
+  );
+}
+
+// Read-only skill row
+function SkillRow({ skill, weight, color }: { skill: string; weight: number; color: string }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-sm">{skill}</span>
+      <div className="flex items-center gap-2">
+        <div className="w-20 h-1.5 rounded-full bg-muted overflow-hidden">
+          <div className={`h-full rounded-full ${color}`} style={{ width: `${weight}%` }} />
+        </div>
+        <span className="text-xs text-muted-foreground w-8">{weight}%</span>
+      </div>
+    </div>
+  );
+}
+
+export function JobMatrixView({ matrix, onSave, saving }: JobMatrixViewProps) {
+  const [editing, setEditing] = useState(false);
+
+  // Editable state
+  const [requiredSkills, setRequiredSkills] = useState(matrix.requiredSkills.map(s => ({ ...s })));
+  const [preferredSkills, setPreferredSkills] = useState(matrix.preferredSkills.map(s => ({ ...s })));
+  const [experienceWeight, setExperienceWeight] = useState(matrix.experienceWeight);
+  const [locationWeight, setLocationWeight] = useState(matrix.locationWeight);
+  const [domainWeight, setDomainWeight] = useState(matrix.domainWeight);
+  const [newRequiredSkill, setNewRequiredSkill] = useState('');
+  const [newPreferredSkill, setNewPreferredSkill] = useState('');
+
+  const skillsWeight = 100 - experienceWeight - locationWeight - domainWeight;
+
+  const handleStartEdit = () => {
+    // Reset to current matrix values
+    setRequiredSkills(matrix.requiredSkills.map(s => ({ ...s })));
+    setPreferredSkills(matrix.preferredSkills.map(s => ({ ...s })));
+    setExperienceWeight(matrix.experienceWeight);
+    setLocationWeight(matrix.locationWeight);
+    setDomainWeight(matrix.domainWeight);
+    setEditing(true);
+  };
+
+  const handleCancel = () => {
+    setEditing(false);
+    setNewRequiredSkill('');
+    setNewPreferredSkill('');
+  };
+
+  const handleReset = () => {
+    setRequiredSkills(matrix.requiredSkills.map(s => ({ ...s })));
+    setPreferredSkills(matrix.preferredSkills.map(s => ({ ...s })));
+    setExperienceWeight(matrix.experienceWeight);
+    setLocationWeight(matrix.locationWeight);
+    setDomainWeight(matrix.domainWeight);
+  };
+
+  const handleSave = async () => {
+    if (!onSave) return;
+    await onSave({
+      requiredSkills: requiredSkills.filter(s => s.skill.trim()),
+      preferredSkills: preferredSkills.filter(s => s.skill.trim()),
+      experienceWeight,
+      locationWeight,
+      domainWeight,
+    });
+    setEditing(false);
+  };
+
+  const addRequiredSkill = () => {
+    if (!newRequiredSkill.trim()) return;
+    setRequiredSkills([...requiredSkills, { skill: newRequiredSkill.trim(), weight: 70 }]);
+    setNewRequiredSkill('');
+  };
+
+  const addPreferredSkill = () => {
+    if (!newPreferredSkill.trim()) return;
+    setPreferredSkills([...preferredSkills, { skill: newPreferredSkill.trim(), weight: 50 }]);
+    setNewPreferredSkill('');
+  };
+
+  const moveToPreferred = (index: number) => {
+    const skill = requiredSkills[index];
+    setRequiredSkills(requiredSkills.filter((_, i) => i !== index));
+    setPreferredSkills([...preferredSkills, { ...skill, weight: Math.min(skill.weight, 60) }]);
+  };
+
+  const moveToRequired = (index: number) => {
+    const skill = preferredSkills[index];
+    setPreferredSkills(preferredSkills.filter((_, i) => i !== index));
+    setRequiredSkills([...requiredSkills, { ...skill, weight: Math.max(skill.weight, 70) }]);
+  };
+
+  // ===== EDIT MODE =====
+  if (editing) {
+    return (
+      <div className="space-y-4" data-testid="job-matrix-view">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Pencil className="w-4 h-4" />
+            <span>Editing Job Matrix</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={handleReset} className="gap-1.5 text-xs">
+              <RotateCcw className="w-3 h-3" />
+              Reset to AI
+            </Button>
+            <Button variant="ghost" size="sm" onClick={handleCancel} className="gap-1.5 text-xs">
+              <X className="w-3 h-3" />
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleSave} disabled={saving} className="gap-1.5 text-xs">
+              <Save className="w-3 h-3" />
+              {saving ? 'Saving...' : 'Save Changes'}
+            </Button>
+          </div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          {/* Required Skills */}
+          <Card className="border-primary/30">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium">Required Skills</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {requiredSkills.map((s, i) => (
+                  <EditableSkillRow
+                    key={`req-${i}`}
+                    skill={s.skill}
+                    weight={s.weight}
+                    color="bg-primary"
+                    onSkillChange={(name) => {
+                      const updated = [...requiredSkills];
+                      updated[i] = { ...updated[i], skill: name };
+                      setRequiredSkills(updated);
+                    }}
+                    onWeightChange={(w) => {
+                      const updated = [...requiredSkills];
+                      updated[i] = { ...updated[i], weight: w };
+                      setRequiredSkills(updated);
+                    }}
+                    onRemove={() => setRequiredSkills(requiredSkills.filter((_, idx) => idx !== i))}
+                    onMove={() => moveToPreferred(i)}
+                    moveLabel="Move to Preferred"
+                  />
+                ))}
+                <div className="flex items-center gap-2 pt-2 border-t">
+                  <Input
+                    value={newRequiredSkill}
+                    onChange={(e) => setNewRequiredSkill(e.target.value)}
+                    placeholder="Add skill..."
+                    className="h-7 text-sm flex-1"
+                    onKeyDown={(e) => e.key === 'Enter' && addRequiredSkill()}
+                  />
+                  <Button variant="ghost" size="sm" onClick={addRequiredSkill} className="h-7 px-2">
+                    <Plus className="w-3 h-3" />
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Preferred Skills */}
+          <Card className="border-emerald-500/30">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium">Preferred Skills</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {preferredSkills.map((s, i) => (
+                  <EditableSkillRow
+                    key={`pref-${i}`}
+                    skill={s.skill}
+                    weight={s.weight}
+                    color="bg-emerald-500"
+                    onSkillChange={(name) => {
+                      const updated = [...preferredSkills];
+                      updated[i] = { ...updated[i], skill: name };
+                      setPreferredSkills(updated);
+                    }}
+                    onWeightChange={(w) => {
+                      const updated = [...preferredSkills];
+                      updated[i] = { ...updated[i], weight: w };
+                      setPreferredSkills(updated);
+                    }}
+                    onRemove={() => setPreferredSkills(preferredSkills.filter((_, idx) => idx !== i))}
+                    onMove={() => moveToRequired(i)}
+                    moveLabel="Move to Required"
+                  />
+                ))}
+                <div className="flex items-center gap-2 pt-2 border-t">
+                  <Input
+                    value={newPreferredSkill}
+                    onChange={(e) => setNewPreferredSkill(e.target.value)}
+                    placeholder="Add skill..."
+                    className="h-7 text-sm flex-1"
+                    onKeyDown={(e) => e.key === 'Enter' && addPreferredSkill()}
+                  />
+                  <Button variant="ghost" size="sm" onClick={addPreferredSkill} className="h-7 px-2">
+                    <Plus className="w-3 h-3" />
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Matching Weights */}
+        <Card className="border-amber-500/30">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium">Matching Weights</CardTitle>
+            <p className="text-xs text-muted-foreground">Must total 100%. Skills weight adjusts automatically.</p>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+              <div className="space-y-2">
+                <div className="text-center">
+                  <p className={`text-2xl font-bold ${skillsWeight < 0 ? 'text-destructive' : 'text-blue-600 dark:text-blue-400'}`}>
+                    {skillsWeight}%
+                  </p>
+                  <p className="text-xs text-muted-foreground">Skills (auto)</p>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-primary">{experienceWeight}%</p>
+                  <p className="text-xs text-muted-foreground mb-2">Experience</p>
+                  <Slider
+                    value={[experienceWeight]}
+                    onValueChange={([v]) => setExperienceWeight(v)}
+                    max={60}
+                    min={0}
+                    step={5}
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{locationWeight}%</p>
+                  <p className="text-xs text-muted-foreground mb-2">Location</p>
+                  <Slider
+                    value={[locationWeight]}
+                    onValueChange={([v]) => setLocationWeight(v)}
+                    max={40}
+                    min={0}
+                    step={5}
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-purple-600 dark:text-purple-400">{domainWeight}%</p>
+                  <p className="text-xs text-muted-foreground mb-2">Domain</p>
+                  <Slider
+                    value={[domainWeight]}
+                    onValueChange={([v]) => setDomainWeight(v)}
+                    max={40}
+                    min={0}
+                    step={5}
+                  />
+                </div>
+              </div>
+            </div>
+            {skillsWeight < 0 && (
+              <p className="text-xs text-destructive mt-2 text-center">
+                Weights exceed 100%! Reduce Experience, Location, or Domain weights.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // ===== VIEW MODE =====
   return (
     <div className="space-y-4" data-testid="job-matrix-view">
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Sparkles className="w-4 h-4" />
-        <span>Matrix generated by Qwen (latest)</span>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Sparkles className="w-4 h-4" />
+          <span>Matrix generated by Qwen (latest)</span>
+        </div>
+        {onSave && (
+          <Button variant="outline" size="sm" onClick={handleStartEdit} className="gap-1.5 text-xs">
+            <Pencil className="w-3 h-3" />
+            Edit Matrix
+          </Button>
+        )}
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -183,18 +532,7 @@ export function JobMatrixView({ matrix }: JobMatrixViewProps) {
           <CardContent>
             <div className="space-y-2">
               {matrix.requiredSkills.map(({ skill, weight }) => (
-                <div key={skill} className="flex items-center justify-between">
-                  <span className="text-sm">{skill}</span>
-                  <div className="flex items-center gap-2">
-                    <div className="w-20 h-1.5 rounded-full bg-muted overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-primary"
-                        style={{ width: `${weight}%` }}
-                      />
-                    </div>
-                    <span className="text-xs text-muted-foreground w-8">{weight}%</span>
-                  </div>
-                </div>
+                <SkillRow key={skill} skill={skill} weight={weight} color="bg-primary" />
               ))}
             </div>
           </CardContent>
@@ -207,18 +545,7 @@ export function JobMatrixView({ matrix }: JobMatrixViewProps) {
           <CardContent>
             <div className="space-y-2">
               {matrix.preferredSkills.map(({ skill, weight }) => (
-                <div key={skill} className="flex items-center justify-between">
-                  <span className="text-sm">{skill}</span>
-                  <div className="flex items-center gap-2">
-                    <div className="w-20 h-1.5 rounded-full bg-muted overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-emerald-500"
-                        style={{ width: `${weight}%` }}
-                      />
-                    </div>
-                    <span className="text-xs text-muted-foreground w-8">{weight}%</span>
-                  </div>
-                </div>
+                <SkillRow key={skill} skill={skill} weight={weight} color="bg-emerald-500" />
               ))}
             </div>
           </CardContent>
@@ -230,7 +557,11 @@ export function JobMatrixView({ matrix }: JobMatrixViewProps) {
           <CardTitle className="text-sm font-medium">Matching Weights</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-4 gap-4">
+            <div className="text-center">
+              <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{skillsWeight}%</p>
+              <p className="text-xs text-muted-foreground">Skills</p>
+            </div>
             <div className="text-center">
               <p className="text-2xl font-bold text-primary">{matrix.experienceWeight}%</p>
               <p className="text-xs text-muted-foreground">Experience</p>

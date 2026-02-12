@@ -1,0 +1,26 @@
+import { Router } from 'express';
+import { aiController } from '../controllers/aiController.js';
+import { authenticateToken, requireCandidate, requireCompany } from '../middleware/auth.js';
+
+const router = Router();
+
+// All AI routes require authentication
+router.use(authenticateToken);
+
+// ---- Candidate-only AI endpoints ----
+router.post('/cv-review', requireCandidate, (req, res) => aiController.reviewCv(req as any, res));
+router.post('/tailor-cv', requireCandidate, (req, res) => aiController.tailorCv(req as any, res));
+router.post('/cover-letter', requireCandidate, (req, res) => aiController.generateCoverLetter(req as any, res));
+router.post('/skill-gap-analysis', requireCandidate, (req, res) => aiController.analyzeSkillGaps(req as any, res));
+
+// ---- Company-only AI endpoints ----
+router.post('/review-job-posting', requireCompany, (req, res) => aiController.reviewJobPosting(req as any, res));
+router.post('/generate-job-description', requireCompany, (req, res) => aiController.generateJobDescription(req as any, res));
+router.post('/interview-questions', requireCompany, (req, res) => aiController.generateInterviewQuestions(req as any, res));
+router.post('/candidate-summary', requireCompany, (req, res) => aiController.generateCandidateSummary(req as any, res));
+
+// ---- Available to any authenticated user ----
+router.post('/salary-estimate', (req, res) => aiController.estimateSalary(req as any, res));
+router.post('/chat', (req, res) => aiController.chat(req as any, res));
+
+export default router;

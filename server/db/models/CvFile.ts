@@ -12,6 +12,8 @@ export interface CvFileAttributes {
   file_size: number;
   status: CvStatus;
   batch_tag?: string;
+  label?: string;
+  is_primary?: boolean;
   uploaded_at?: Date;
   processed_at?: Date;
 }
@@ -24,6 +26,8 @@ export class CvFile extends BaseModel<CvFileAttributes> implements CvFileAttribu
   declare file_size: number;
   declare status: CvStatus;
   declare batch_tag?: string;
+  declare label?: string;
+  declare is_primary: boolean;
   declare uploaded_at: Date;
   declare processed_at?: Date;
 }
@@ -63,6 +67,15 @@ CvFile.init(
     batch_tag: {
       type: DataTypes.STRING(255),
       allowNull: true,
+    },
+    label: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    is_primary: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
     },
     uploaded_at: {
       type: DataTypes.DATE,

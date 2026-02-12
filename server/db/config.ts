@@ -39,10 +39,20 @@ const getLogging = () => {
 // Parse DATABASE_URL or use individual env vars
 let sequelize: Sequelize;
 
+// Connection pool configuration
+const poolConfig = {
+  max: parseInt(process.env.DB_POOL_MAX || '10', 10),
+  min: parseInt(process.env.DB_POOL_MIN || '2', 10),
+  idle: parseInt(process.env.DB_POOL_IDLE || '10000', 10),
+  acquire: 30000,
+  evict: 1000,
+};
+
 if (process.env.DATABASE_URL) {
   sequelize = new Sequelize(process.env.DATABASE_URL, {
     dialect: 'mysql',
     logging: getLogging(),
+    pool: poolConfig,
   });
 } else {
   sequelize = new Sequelize(
@@ -54,6 +64,7 @@ if (process.env.DATABASE_URL) {
       port: parseInt(process.env.DB_PORT || '3306', 10),
       dialect: 'mysql',
       logging: getLogging(),
+      pool: poolConfig,
     }
   );
 }

@@ -1,5 +1,7 @@
 import { useLocation, Link } from 'wouter';
 import { useAuthStore } from '@/store/auth';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { getUnreadNotificationCount, getUnreadMessageCount } from '@/api';
 import {
   Sidebar,
   SidebarContent,
@@ -15,7 +17,8 @@ import {
   SidebarFooter,
 } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Badge } from '@/components/ui/badge';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
   LayoutDashboard,
   FileText,
@@ -28,6 +31,20 @@ import {
   Sun,
   Sparkles,
   RefreshCw,
+  Building2,
+  ClipboardList,
+  Bell,
+  Columns3,
+  MessageSquare,
+  Bookmark,
+  BarChart3,
+  Shield,
+  Users,
+  FileSearch,
+  PenTool,
+  Target,
+  MessageCircleQuestion,
+  Wand2,
 } from 'lucide-react';
 
 interface AppLayoutProps {
@@ -39,22 +56,83 @@ const adminMenuItems = [
   { title: 'CVs', url: '/admin/cvs', icon: FileText },
   { title: 'Upload CVs', url: '/admin/cvs/upload', icon: Upload },
   { title: 'Jobs', url: '/admin/jobs', icon: Briefcase },
+  { title: 'Analytics', url: '/admin/analytics', icon: BarChart3 },
+  { title: 'Messages', url: '/messages', icon: MessageSquare },
   { title: 'Bulk Operations', url: '/admin/bulk-operations', icon: RefreshCw },
   { title: 'Settings', url: '/admin/settings', icon: Settings },
 ];
 
 const candidateMenuItems = [
   { title: 'Dashboard', url: '/candidate/dashboard', icon: LayoutDashboard },
-  { title: 'Jobs', url: '/candidate/jobs', icon: Briefcase },
-  { title: 'Profile', url: '/candidate/profile', icon: User },
+  { title: 'Browse Jobs', url: '/candidate/jobs', icon: Briefcase },
+  { title: 'My Applications', url: '/candidate/applications', icon: ClipboardList },
+  { title: 'Saved Jobs', url: '/candidate/saved-jobs', icon: Bookmark },
+  { title: 'Messages', url: '/messages', icon: MessageSquare },
+  { title: 'Notifications', url: '/notifications', icon: Bell },
+  { title: 'AI CV Review', url: '/candidate/cv-review', icon: FileSearch },
+  { title: 'Cover Letter', url: '/candidate/cover-letter', icon: PenTool },
+  { title: 'Skill Gap', url: '/candidate/skill-gap', icon: Target },
+  { title: 'My Profile', url: '/candidate/profile', icon: User },
+  { title: 'Privacy', url: '/candidate/privacy', icon: Shield },
+];
+
+const companyMenuItems = [
+  { title: 'Dashboard', url: '/company/dashboard', icon: LayoutDashboard },
+  { title: 'Company Profile', url: '/company/profile', icon: Building2 },
+  { title: 'Jobs', url: '/company/jobs', icon: Briefcase },
+  { title: 'AI Job Generator', url: '/company/job-generator', icon: Wand2 },
+  { title: 'Interview Prep', url: '/company/interview-prep', icon: MessageCircleQuestion },
+  { title: 'Analytics', url: '/company/analytics', icon: BarChart3 },
+  { title: 'Messages', url: '/messages', icon: MessageSquare },
+  { title: 'Notifications', url: '/notifications', icon: Bell },
+  { title: 'Team & Settings', url: '/company/settings', icon: Settings },
 ];
 
 export function AppLayout({ children }: AppLayoutProps) {
-  const [location] = useLocation();
-  const { user, logout, theme, toggleTheme, switchRole } = useAuthStore();
+  const [location, setLocation] = useLocation();
+  const { user, logout, theme, toggleTheme, isAuthenticated } = useAuthStore();
 
-  const menuItems = user?.role === 'admin' ? adminMenuItems : candidateMenuItems;
-  const isAdmin = user?.role === 'admin';
+  // Fetch unread notification count
+  const { data: unreadData } = useQuery({
+    queryKey: ['unread-count'],
+    queryFn: getUnreadNotificationCount,
+    enabled: isAuthenticated,
+    refetchInterval: 30000, // Refresh every 30 seconds
+  });
+  const unreadCount = unreadData?.unreadCount || 0;
+
+  // Fetch unread message count
+  const { data: unreadMsgData } = useQuery({
+    queryKey: ['unread-messages'],
+    queryFn: getUnreadMessageCount,
+    enabled: isAuthenticated,
+    refetchInterval: 15000,
+  });
+  const unreadMsgCount = unreadMsgData?.unreadCount || 0;
+
+  const role = user?.role || 'candidate';
+  const menuItems =
+    role === 'admin'
+      ? adminMenuItems
+      : role === 'company'
+      ? companyMenuItems
+      : candidateMenuItems;
+
+  const dashboardUrl =
+    role === 'admin'
+      ? '/admin/dashboard'
+      : role === 'company'
+      ? '/company/dashboard'
+      : '/candidate/dashboard';
+
+  const roleLabelMap = {
+    admin: 'Admin Panel',
+    company: 'Company Portal',
+    candidate: 'Candidate Portal',
+  };
+
+  // Determine avatar image
+  const avatarUrl = user?.photoUrl || user?.logoUrl || undefined;
 
   const sidebarStyle = {
     '--sidebar-width': '16rem',
@@ -66,7 +144,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       <div className="flex h-screen w-full overflow-hidden">
         <Sidebar className="border-r border-sidebar-border">
           <SidebarHeader className="p-4 border-b border-sidebar-border">
-            <Link href={isAdmin ? '/admin/dashboard' : '/candidate/dashboard'}>
+            <Link href={dashboardUrl}>
               <div className="flex items-center gap-3 cursor-pointer">
                 <div className="flex items-center justify-center w-9 h-9 rounded-md bg-primary text-primary-foreground">
                   <Sparkles className="w-5 h-5" />
@@ -82,7 +160,7 @@ export function AppLayout({ children }: AppLayoutProps) {
           <SidebarContent className="p-2">
             <SidebarGroup>
               <SidebarGroupLabel className="text-xs font-medium text-muted-foreground px-2">
-                {isAdmin ? 'Admin Panel' : 'Candidate Portal'}
+                {roleLabelMap[role]}
               </SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
@@ -111,12 +189,15 @@ export function AppLayout({ children }: AppLayoutProps) {
           <SidebarFooter className="p-3 border-t border-sidebar-border">
             <div className="flex items-center gap-3 p-2 rounded-md bg-sidebar-accent/50">
               <Avatar className="w-8 h-8">
+                {avatarUrl && <AvatarImage src={avatarUrl} />}
                 <AvatarFallback className="bg-primary text-primary-foreground text-xs">
                   {user?.name?.split(' ').map(n => n[0]).join('').toUpperCase() || 'U'}
                 </AvatarFallback>
               </Avatar>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">{user?.name}</p>
+                <p className="text-sm font-medium truncate">
+                  {role === 'company' ? (user?.companyName || user?.name) : user?.name}
+                </p>
                 <p className="text-xs text-muted-foreground capitalize">{user?.role}</p>
               </div>
             </div>
@@ -132,15 +213,34 @@ export function AppLayout({ children }: AppLayoutProps) {
             <div className="flex items-center gap-2">
               <Button
                 variant="ghost"
-                size="sm"
-                onClick={() => switchRole(isAdmin ? 'candidate' : 'admin')}
-                className="text-xs gap-1.5"
-                data-testid="button-switch-role"
+                size="icon"
+                className="relative"
+                onClick={() => setLocation('/messages')}
+                data-testid="button-messages"
               >
-                <User className="w-3.5 h-3.5" />
-                Switch to {isAdmin ? 'Candidate' : 'Admin'}
+                <MessageSquare className="w-4 h-4" />
+                {unreadMsgCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 flex items-center justify-center w-4 h-4 text-[10px] font-bold text-white bg-blue-500 rounded-full">
+                    {unreadMsgCount > 9 ? '9+' : unreadMsgCount}
+                  </span>
+                )}
               </Button>
-              
+
+              <Button
+                variant="ghost"
+                size="icon"
+                className="relative"
+                onClick={() => setLocation('/notifications')}
+                data-testid="button-notifications"
+              >
+                <Bell className="w-4 h-4" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 flex items-center justify-center w-4 h-4 text-[10px] font-bold text-white bg-red-500 rounded-full">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </Button>
+
               <Button
                 variant="ghost"
                 size="icon"
@@ -165,7 +265,7 @@ export function AppLayout({ children }: AppLayoutProps) {
             </div>
           </header>
 
-          <main className="flex-1 overflow-auto p-6 custom-scrollbar">
+          <main className="flex-1 overflow-auto p-3 sm:p-4 md:p-6 custom-scrollbar">
             {children}
           </main>
         </div>

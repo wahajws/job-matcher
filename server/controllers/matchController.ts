@@ -18,10 +18,10 @@ export class MatchController extends BaseController {
         order: [['score', 'DESC']],
       });
 
-      // Filter out low-quality matches (score < 35)
+      // Filter out low-quality matches (score < 25)
       const filteredMatches = matches.filter((m: any) => {
         const score = typeof m.score === 'number' ? m.score : 0;
-        return score >= 35; // Only show matches with score >= 35 (LLM scoring is more nuanced)
+        return score >= 25; // Show matches with at least some relevance
       });
 
       return filteredMatches.map((m: any) => ({
@@ -125,6 +125,34 @@ export class MatchController extends BaseController {
 
       console.log(`[MatchController] Evaluating match: candidate="${candidate.name}" (${candidateId}) vs job="${job.title}" (${jobId})`);
 
+      // ===== PRE-FILTER: Internship/Entry-level jobs — only allow intern-like candidates =====
+      const jobSeniority = ((job as any).seniority_level || '').toLowerCase();
+      const isInternshipOrEntryJob = jobSeniority === 'internship' || jobSeniority === 'intern' || 
+        (job.title?.toLowerCase().includes('intern') && (job as any).min_years_experience === 0);
+      
+      if (isInternshipOrEntryJob) {
+        const candidateYears = candidateMatrix.total_years_experience || 0;
+        const headlineLower = (candidate.headline || '').toLowerCase();
+        const candidateRoles = (candidateMatrix.roles || []).map((r: string) => r.toLowerCase());
+        
+        // Check if candidate looks experienced (NOT intern-like)
+        const seniorKeywords = ['senior', 'lead', 'principal', 'architect', 'manager', 'staff', 'director', 'vp', 'head of'];
+        const midKeywords = ['mid-level', 'mid level', 'experienced', 'software developer', 'software engineer', 'full-stack developer', 'full stack developer', 'backend developer', 'frontend developer'];
+        
+        const hasSeniorSignal = seniorKeywords.some(kw => headlineLower.includes(kw)) ||
+          candidateRoles.some((r: string) => seniorKeywords.some(kw => r.includes(kw)));
+        const hasMidSignal = midKeywords.some(kw => headlineLower.includes(kw)) ||
+          candidateRoles.some((r: string) => midKeywords.some(kw => r.includes(kw)));
+        
+        // Block if: 3+ years experience, OR has senior/mid title signals with 2+ years
+        const isExperienced = candidateYears >= 3 || (candidateYears >= 2 && (hasSeniorSignal || hasMidSignal)) || hasSeniorSignal;
+        
+        if (isExperienced) {
+          console.log(`[MatchController] ⛔ SKIPPING experienced candidate "${candidate.name}" (${candidateYears}y, headline="${candidate.headline}") for internship job "${job.title}" — not a fit`);
+          return;
+        }
+      }
+
       // ===== LLM-BASED MATCHING (Primary) =====
       // Use Qwen to semantically evaluate the match — handles GenAI ≈ LLM ≈ AI etc.
       let score: number;
@@ -205,8 +233,8 @@ export class MatchController extends BaseController {
         }
       }
 
-      // Only create match if score is above minimum threshold (35 for LLM, since LLM is more nuanced)
-      if (score < 35) {
+      // Skip very low scores (likely poor matches)
+      if (score < 20) {
         console.log(`[MatchController] Skipping candidate ${candidateId} for job ${jobId} - score too low: ${score}`);
         return;
       }

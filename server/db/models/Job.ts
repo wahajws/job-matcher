@@ -11,6 +11,7 @@ export interface JobAttributes {
   title: string;
   department: string;
   company?: string;
+  company_id?: string; // FK → company_profiles.id
   location_type: LocationType;
   country: string;
   city: string;
@@ -20,6 +21,8 @@ export interface JobAttributes {
   min_years_experience: number;
   seniority_level: SeniorityLevel;
   status: JobStatus;
+  deadline?: Date;
+  is_featured?: boolean;
   created_at?: Date;
 }
 
@@ -28,6 +31,7 @@ export class Job extends BaseModel<JobAttributes> implements JobAttributes {
   declare title: string;
   declare department: string;
   declare company?: string;
+  declare company_id?: string;
   declare location_type: LocationType;
   declare country: string;
   declare city: string;
@@ -37,6 +41,8 @@ export class Job extends BaseModel<JobAttributes> implements JobAttributes {
   declare min_years_experience: number;
   declare seniority_level: SeniorityLevel;
   declare status: JobStatus;
+  declare deadline?: Date;
+  declare is_featured: boolean;
   declare created_at: Date;
 }
 
@@ -58,6 +64,14 @@ Job.init(
     company: {
       type: DataTypes.STRING(255),
       allowNull: true,
+    },
+    company_id: {
+      type: DataTypes.STRING(36),
+      allowNull: true,
+      references: {
+        model: 'company_profiles',
+        key: 'id',
+      },
     },
     location_type: {
       type: DataTypes.ENUM('onsite', 'hybrid', 'remote'),
@@ -88,13 +102,22 @@ Job.init(
       allowNull: false,
     },
     seniority_level: {
-      type: DataTypes.ENUM('junior', 'mid', 'senior', 'lead', 'principal'),
+      type: DataTypes.ENUM('internship', 'junior', 'mid', 'senior', 'lead', 'principal'),
       allowNull: false,
     },
     status: {
       type: DataTypes.ENUM('draft', 'published', 'closed'),
       allowNull: false,
       defaultValue: 'draft',
+    },
+    deadline: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    is_featured: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
     },
     created_at: {
       type: DataTypes.DATE,

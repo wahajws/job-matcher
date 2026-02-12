@@ -1,0 +1,1218 @@
+================================================================================
+                    CV MATCHER — FULL DEVELOPMENT PLAN
+================================================================================
+
+Platform:       Single app (company + candidate + admin)
+Auth:           Email & password
+Pipeline:       Full Kanban (Applied → Screening → Interview → Offer → Hired)
+Messaging:      In-app messaging
+Approach:       Phase by phase
+
+================================================================================
+                         CURRENT STATE (What Exists)
+================================================================================
+
+Backend:
+  ✅ Express.js + MySQL + Sequelize
+  ✅ Qwen LLM integration (CV parsing, job matrix, match scoring)
+  ✅ Models: User, Candidate, Job, CandidateMatrix, JobMatrix, Match, AdminNote, CandidateTag
+  ✅ CV upload + PDF parsing
+  ✅ Job creation (manual, URL, PDF)
+  ✅ AI matching engine
+  ✅ Basic auth (single admin)
+
+Frontend:
+  ✅ React + Vite + TypeScript + Tailwind + shadcn/ui
+  ✅ Admin dashboard
+  ✅ CV list, upload, detail views
+  ✅ Job list, detail, matrix editing
+  ✅ Match ranking, candidate drawer
+  ✅ Report generation
+
+What's Missing:
+  ❌ Multi-role auth (company, candidate, admin)
+  ❌ Company accounts & profiles
+  ❌ Candidate self-service (signup, profile, apply)
+  ❌ Job browsing for candidates
+  ❌ Application pipeline (Kanban)
+  ❌ In-app messaging
+  ❌ Notifications
+  ❌ Search & filtering (public-facing)
+  ❌ Photo upload for profiles
+  ❌ Analytics
+
+
+================================================================================
+                    PHASE 1 — AUTH, PROFILES & DASHBOARDS
+================================================================================
+Goal: Company and Candidate can sign up, log in, and have their own dashboards.
+Estimated effort: 5-7 days
+
+────────────────────────────────────────────────────────────────────────────────
+1.1  DATABASE CHANGES
+────────────────────────────────────────────────────────────────────────────────
+
+A) Modify `users` table:
+   - Add fields: role ('candidate' | 'company' | 'admin'), email (unique),
+     password_hash, email_verified, created_at, updated_at
+   - Remove any admin-only assumptions
+
+B) Create `company_profiles` table:
+   - id (UUID, PK)
+   - user_id (FK → users.id, unique)
+   - company_name (string, required)
+   - logo_url (string, nullable) — stored in /uploads/logos/
+   - industry (string, nullable)
+   - company_size (enum: '1-10', '11-50', '51-200', '201-500', '500+')
+   - website (string, nullable)
+   - description (text, nullable)
+   - country (string)
+   - city (string)
+   - created_at, updated_at
+
+C) Modify `candidates` table:
+   - Add user_id (FK → users.id, unique, nullable for legacy data)
+   - Add photo_url (string, nullable) — stored in /uploads/photos/
+   - Add bio (text, nullable)
+   - Add linkedin_url, github_url, portfolio_url (strings, nullable)
+   - Add phone (string, nullable)
+   - Keep existing fields: name, email, headline, country, etc.
+
+D) Migration strategy:
+   - Existing admin user → role = 'admin'
+   - Existing candidates → no user_id (uploaded by admin, not self-registered)
+   - New candidates who sign up → get a user account linked to candidate record
+
+────────────────────────────────────────────────────────────────────────────────
+1.2  BACKEND — AUTH SYSTEM
+────────────────────────────────────────────────────────────────────────────────
+
+A) New routes: POST /api/auth/register
+   - Accepts: { email, password, role: 'candidate' | 'company', name }
+   - Validates email uniqueness, password strength (min 8 chars)
+   - Hashes password with bcrypt
+   - Creates user record
+   - If role = 'company' → also creates empty company_profiles row
+   - If role = 'candidate' → also creates empty candidates row linked to user
+   - Returns JWT token
+
+B) Modify: POST /api/auth/login
+   - Accepts: { email, password }
+   - Validates credentials
+   - Returns JWT token + user object (with role)
+
+C) Middleware: authMiddleware
+   - Verify JWT on protected routes
+   - Attach user to req (req.user = { id, role, email })
+   - Role-based guards:
+     * requireRole('admin') — admin-only routes
+     * requireRole('company') — company routes
+     * requireRole('candidate') — candidate routes
+     * requireAnyRole('company', 'admin') — shared routes
+
+D) New routes: GET /api/auth/me
+   - Returns current user + profile (company or candidate)
+
+E) Password reset flow (optional for Phase 1, can defer):
+   - POST /api/auth/forgot-password → sends reset email
+   - POST /api/auth/reset-password → resets with token
+
+────────────────────────────────────────────────────────────────────────────────
+1.3  BACKEND — PROFILE ENDPOINTS
+────────────────────────────────────────────────────────────────────────────────
+
+A) Candidate profile:
+   - GET    /api/candidate/profile         → get own profile
+   - PUT    /api/candidate/profile         → update profile fields
+   - POST   /api/candidate/profile/photo   → upload photo (multer, save to /uploads/photos/)
+   - POST   /api/candidate/cv              → upload CV (reuse existing CV upload logic)
+   - GET    /api/candidate/cv              → get own CV and parsed data
+
+B) Company profile:
+   - GET    /api/company/profile           → get own company profile
+   - PUT    /api/company/profile           → update company fields
+   - POST   /api/company/profile/logo      → upload logo (multer, save to /uploads/logos/)
+
+C) Static file serving:
+   - Serve /uploads/photos/ and /uploads/logos/ as static files
+   - Or use a simple image resizing middleware for thumbnails
+
+────────────────────────────────────────────────────────────────────────────────
+1.4  FRONTEND — AUTH PAGES
+────────────────────────────────────────────────────────────────────────────────
+
+A) New pages:
+   - /login          → email + password form, link to register
+   - /register       → email + password + name + role selector (candidate/company)
+   - /forgot-password → email input (if implementing)
+
+B) Auth flow:
+   - On login/register → store JWT in localStorage
+   - Redirect based on role:
+     * admin     → /admin/dashboard (existing)
+     * company   → /company/dashboard (new)
+     * candidate → /dashboard (new)
+   - Protected route wrapper checks role
+
+C) Update existing auth store:
+   - Store user role
+   - Add register function
+   - Route guards per role
+
+────────────────────────────────────────────────────────────────────────────────
+1.5  FRONTEND — CANDIDATE DASHBOARD & PROFILE
+────────────────────────────────────────────────────────────────────────────────
+
+A) Candidate layout:
+   - Sidebar: Dashboard, My Profile, Browse Jobs, My Applications, Messages
+   - Top bar: user name, photo, logout
+
+B) /dashboard (candidate):
+   - Profile completeness card (photo, headline, CV uploaded, skills count)
+   - Recommended jobs (AI-matched, top 5)
+   - Recent applications with status
+   - Quick stats: total applications, shortlisted, interviews
+
+C) /profile (candidate):
+   - Photo upload (circular crop preview)
+   - Edit: name, headline, bio, country, city, phone
+   - Edit: LinkedIn, GitHub, portfolio URLs
+   - CV section: current CV, re-upload, view parsed skills/experience
+   - Skills section: shows AI-extracted skills, can add/remove manually
+
+────────────────────────────────────────────────────────────────────────────────
+1.6  FRONTEND — COMPANY DASHBOARD & PROFILE
+────────────────────────────────────────────────────────────────────────────────
+
+A) Company layout:
+   - Sidebar: Dashboard, Company Profile, Jobs, Applications, Messages
+   - Top bar: company name, logo, logout
+
+B) /company/dashboard:
+   - Stats cards: active jobs, total applications, shortlisted, hired
+   - Recent applications (across all jobs)
+   - Active jobs list with application counts
+   - Quick actions: post new job, view all applications
+
+C) /company/profile:
+   - Logo upload
+   - Edit: company name, industry, size, website, description, country, city
+
+────────────────────────────────────────────────────────────────────────────────
+1.7  FRONTEND — ADMIN DASHBOARD UPDATES
+────────────────────────────────────────────────────────────────────────────────
+
+A) Keep existing admin dashboard mostly as-is
+B) Add: "Companies" section — list all registered companies
+C) Add: "Registered Candidates" vs "Uploaded CVs" distinction
+D) Admin can still upload CVs on behalf of candidates (existing flow)
+
+
+================================================================================
+                    PHASE 2 — JOB BROWSING & APPLICATIONS
+================================================================================
+Goal: Candidates can browse jobs and apply. Companies see applications.
+Estimated effort: 4-6 days
+
+────────────────────────────────────────────────────────────────────────────────
+2.1  DATABASE CHANGES
+────────────────────────────────────────────────────────────────────────────────
+
+A) Modify `jobs` table:
+   - Add company_id (FK → company_profiles.id) — which company posted this job
+   - Add deadline (date, nullable) — auto-close after this date
+   - Add is_featured (boolean, default false)
+   - Keep existing fields
+
+B) Create `applications` table:
+   - id (UUID, PK)
+   - candidate_id (FK → candidates.id)
+   - job_id (FK → jobs.id)
+   - status (enum: 'applied', 'screening', 'interview', 'offer', 'hired', 'rejected', 'withdrawn')
+   - cover_letter (text, nullable)
+   - applied_at (datetime)
+   - updated_at (datetime)
+   - match_id (FK → matches.id, nullable) — link to AI match if exists
+   - notes (JSON, nullable) — internal company notes on this application
+   - UNIQUE constraint on (candidate_id, job_id) — can't apply twice
+
+C) Modify `matches` table:
+   - Add application_id (FK → applications.id, nullable)
+   - This links AI matches to actual applications
+
+────────────────────────────────────────────────────────────────────────────────
+2.2  BACKEND — JOB BROWSING (PUBLIC/CANDIDATE)
+────────────────────────────────────────────────────────────────────────────────
+
+A) GET /api/jobs/browse
+   - Public endpoint (no auth required, but auth enhances results)
+   - Query params: search, skills[], country, locationType, seniorityLevel,
+     minSalary, page, limit, sortBy
+   - Returns only published + non-expired jobs
+   - If authenticated as candidate: also returns AI match score per job
+
+B) GET /api/jobs/:id/public
+   - Public job detail view
+   - Returns job info + company profile (name, logo, industry)
+   - If authenticated: returns match score + breakdown
+
+────────────────────────────────────────────────────────────────────────────────
+2.3  BACKEND — APPLICATION SYSTEM
+────────────────────────────────────────────────────────────────────────────────
+
+A) POST /api/applications
+   - Auth: candidate only
+   - Body: { jobId, coverLetter? }
+   - Creates application record (status = 'applied')
+   - Triggers AI match calculation if not already done
+   - Returns application record
+
+B) GET /api/candidate/applications
+   - Auth: candidate only
+   - Returns all applications for the logged-in candidate
+   - Includes job details, status, match score
+
+C) DELETE /api/applications/:id
+   - Auth: candidate only (own application)
+   - Only allowed if status = 'applied' (can't withdraw after screening)
+   - Sets status = 'withdrawn'
+
+D) GET /api/company/jobs/:jobId/applications
+   - Auth: company only (own job)
+   - Returns all applications for a specific job
+   - Includes candidate info, match score, status
+   - Sortable by score, date, status
+
+E) PATCH /api/applications/:id/status
+   - Auth: company only (own job's application)
+   - Body: { status: 'screening' | 'interview' | 'offer' | 'hired' | 'rejected' }
+   - Updates application status
+   - (Phase 3 will add notifications here)
+
+────────────────────────────────────────────────────────────────────────────────
+2.4  BACKEND — COMPANY JOB MANAGEMENT
+────────────────────────────────────────────────────────────────────────────────
+
+A) POST /api/company/jobs
+   - Auth: company only
+   - Same as existing job creation but auto-sets company_id
+   - Triggers matrix generation
+
+B) GET /api/company/jobs
+   - Auth: company only
+   - Returns jobs posted by this company with application counts
+
+C) PUT /api/company/jobs/:id
+   - Auth: company only (own job)
+   - Update job details
+
+D) DELETE /api/company/jobs/:id
+   - Auth: company only (own job)
+   - Soft delete or close job
+
+────────────────────────────────────────────────────────────────────────────────
+2.5  FRONTEND — CANDIDATE JOB BROWSING
+────────────────────────────────────────────────────────────────────────────────
+
+A) /jobs (public, but enhanced for logged-in candidates):
+   - Search bar (keyword search)
+   - Filter sidebar: location, remote/onsite/hybrid, seniority, skills
+   - Job cards: title, company logo + name, location, key skills, AI match %
+   - Sort by: relevance (AI score), newest, deadline
+   - Pagination
+
+B) /jobs/:id (job detail):
+   - Full job description
+   - Company info card (logo, name, industry, size)
+   - Required & preferred skills with match indicators
+   - AI match breakdown (if logged in)
+   - "Apply Now" button → opens application modal
+   - Application modal: optional cover letter textarea, submit
+
+C) /applications (candidate):
+   - List of all applications
+   - Status badges (Applied, Screening, Interview, Offer, Hired, Rejected)
+   - Filter by status
+   - Click to view job detail + match info
+
+────────────────────────────────────────────────────────────────────────────────
+2.6  FRONTEND — COMPANY APPLICATIONS VIEW
+────────────────────────────────────────────────────────────────────────────────
+
+A) /company/jobs/:id/applications:
+   - Table view: candidate name, photo, score, status, applied date
+   - Click row → candidate detail drawer (reuse existing)
+   - Quick actions: move to screening, shortlist, reject
+
+B) Update /company/dashboard:
+   - Show application counts per job
+   - Recent applications feed
+
+
+================================================================================
+                    PHASE 3 — APPLICATION PIPELINE (KANBAN) & NOTIFICATIONS
+================================================================================
+Goal: Full hiring pipeline with drag-and-drop. Real-time notifications.
+Estimated effort: 5-7 days
+
+────────────────────────────────────────────────────────────────────────────────
+3.1  DATABASE CHANGES
+────────────────────────────────────────────────────────────────────────────────
+
+A) Create `pipeline_stages` table (customizable per company):
+   - id (UUID, PK)
+   - company_id (FK → company_profiles.id)
+   - name (string) — e.g., "Phone Screen", "Technical Interview"
+   - order (integer) — display order
+   - color (string) — hex color for the stage
+   - is_default (boolean) — system-provided stages
+   Default stages (seeded): Applied, Screening, Interview, Offer, Hired, Rejected
+
+B) Create `notifications` table:
+   - id (UUID, PK)
+   - user_id (FK → users.id) — recipient
+   - type (enum: 'application_received', 'status_changed', 'shortlisted',
+     'rejected', 'new_match', 'message_received', 'job_expired')
+   - title (string)
+   - body (text)
+   - data (JSON) — { jobId, applicationId, candidateId, etc. }
+   - read (boolean, default false)
+   - created_at (datetime)
+
+C) Create `application_history` table:
+   - id (UUID, PK)
+   - application_id (FK → applications.id)
+   - from_status (string)
+   - to_status (string)
+   - changed_by (FK → users.id)
+   - note (text, nullable)
+   - created_at (datetime)
+
+────────────────────────────────────────────────────────────────────────────────
+3.2  BACKEND — KANBAN PIPELINE
+────────────────────────────────────────────────────────────────────────────────
+
+A) GET /api/company/jobs/:jobId/pipeline
+   - Returns applications grouped by stage
+   - Each application includes: candidate info, score, time in stage
+
+B) PATCH /api/applications/:id/move
+   - Body: { stage: 'interview', note?: 'Scheduled for Tuesday' }
+   - Updates status
+   - Creates application_history record
+   - Triggers notification to candidate
+
+C) GET /api/company/pipeline-stages
+   - Returns company's pipeline stages (default + custom)
+
+D) POST /api/company/pipeline-stages
+   - Create custom stage
+   - Body: { name, color, order }
+
+E) PUT /api/company/pipeline-stages/:id
+   - Update stage name/color/order
+
+F) DELETE /api/company/pipeline-stages/:id
+   - Delete custom stage (move applications to previous stage)
+
+────────────────────────────────────────────────────────────────────────────────
+3.3  BACKEND — NOTIFICATIONS
+────────────────────────────────────────────────────────────────────────────────
+
+A) GET /api/notifications
+   - Auth: any logged-in user
+   - Returns paginated notifications, newest first
+   - Query: ?unreadOnly=true
+
+B) PATCH /api/notifications/:id/read
+   - Mark single notification as read
+
+C) PATCH /api/notifications/read-all
+   - Mark all notifications as read
+
+D) GET /api/notifications/unread-count
+   - Returns count (for badge in navbar)
+
+E) Notification triggers (server-side, called from other controllers):
+   - Application received → notify company
+   - Status changed → notify candidate
+   - New AI match found → notify candidate
+   - Message received → notify recipient (Phase 4)
+
+F) Optional: WebSocket for real-time notifications
+   - Use socket.io
+   - On notification created → emit to user's socket
+   - Frontend listens and updates badge count
+
+────────────────────────────────────────────────────────────────────────────────
+3.4  FRONTEND — KANBAN BOARD
+────────────────────────────────────────────────────────────────────────────────
+
+A) /company/jobs/:id/pipeline:
+   - Kanban columns: Applied | Screening | Interview | Offer | Hired | Rejected
+   - Each card: candidate photo, name, score badge, time in stage
+   - Drag and drop between columns (use @dnd-kit/core or react-beautiful-dnd)
+   - On drop → API call to move application
+   - Optional note when moving (modal popup)
+   - Filter by score range
+   - Column counts
+
+B) Pipeline settings page:
+   - /company/settings/pipeline
+   - Add/edit/remove/reorder custom stages
+   - Color picker for each stage
+
+────────────────────────────────────────────────────────────────────────────────
+3.5  FRONTEND — NOTIFICATIONS
+────────────────────────────────────────────────────────────────────────────────
+
+A) Notification bell icon in top navbar (all roles):
+   - Badge with unread count
+   - Click → dropdown with recent notifications
+   - "Mark all as read" button
+   - "View all" link → /notifications page
+
+B) /notifications page:
+   - Full list of notifications
+   - Click notification → navigate to relevant page
+   - Filter: all / unread
+
+C) Toast notifications for real-time events (if using WebSocket)
+
+────────────────────────────────────────────────────────────────────────────────
+3.6  FRONTEND — SEARCH & FILTERING
+────────────────────────────────────────────────────────────────────────────────
+
+A) Company talent search: /company/search
+   - Search candidates across the platform (who opted in to be visible)
+   - Filter by skills, experience, location, seniority
+   - Candidate cards: photo, name, headline, top skills, match % to active jobs
+   - Click → view candidate public profile
+
+B) Candidate job search (enhance Phase 2):
+   - Add "Saved Jobs" feature (bookmark icon)
+   - /saved-jobs page
+   - "Similar Jobs" recommendations on job detail page
+
+
+================================================================================
+                    PHASE 4 — MESSAGING & ANALYTICS
+================================================================================
+Goal: In-app messaging between companies and candidates. Analytics dashboards.
+Estimated effort: 5-7 days
+
+────────────────────────────────────────────────────────────────────────────────
+4.1  DATABASE CHANGES
+────────────────────────────────────────────────────────────────────────────────
+
+A) Create `conversations` table:
+   - id (UUID, PK)
+   - participant_1_id (FK → users.id) — company user
+   - participant_2_id (FK → users.id) — candidate user
+   - job_id (FK → jobs.id, nullable) — context: which job this conversation is about
+   - application_id (FK → applications.id, nullable)
+   - last_message_at (datetime)
+   - created_at (datetime)
+   - UNIQUE constraint on (participant_1_id, participant_2_id, job_id)
+
+B) Create `messages` table:
+   - id (UUID, PK)
+   - conversation_id (FK → conversations.id)
+   - sender_id (FK → users.id)
+   - content (text)
+   - read (boolean, default false)
+   - created_at (datetime)
+
+C) Create `saved_jobs` table:
+   - id (UUID, PK)
+   - candidate_id (FK → candidates.id)
+   - job_id (FK → jobs.id)
+   - saved_at (datetime)
+   - UNIQUE constraint on (candidate_id, job_id)
+
+────────────────────────────────────────────────────────────────────────────────
+4.2  BACKEND — MESSAGING
+────────────────────────────────────────────────────────────────────────────────
+
+A) GET /api/conversations
+   - Auth: any logged-in user
+   - Returns all conversations for the user
+   - Includes: other participant's name/photo, last message preview, unread count
+
+B) GET /api/conversations/:id/messages
+   - Auth: participant only
+   - Returns paginated messages (newest first)
+   - Marks unread messages as read
+
+C) POST /api/conversations/:id/messages
+   - Auth: participant only
+   - Body: { content }
+   - Creates message
+   - Triggers notification to other participant
+   - WebSocket: emit real-time message
+
+D) POST /api/conversations
+   - Auth: company only (companies initiate conversations)
+   - Body: { candidateUserId, jobId?, message }
+   - Creates conversation + first message
+
+E) GET /api/conversations/unread-count
+   - Returns total unread message count (for badge)
+
+────────────────────────────────────────────────────────────────────────────────
+4.3  BACKEND — ANALYTICS
+────────────────────────────────────────────────────────────────────────────────
+
+A) GET /api/company/analytics
+   - Auth: company only
+   - Returns:
+     * Applications over time (daily/weekly/monthly)
+     * Pipeline conversion rates (applied → screening → interview → offer → hired)
+     * Average time to hire
+     * Top performing jobs (most applications, highest quality candidates)
+     * Candidate source breakdown
+     * Skills demand vs supply
+
+B) GET /api/candidate/analytics
+   - Auth: candidate only
+   - Returns:
+     * Profile views (if implementing view tracking)
+     * Application response rate
+     * Average match score across applications
+     * Skills in demand (based on jobs they match with)
+
+C) GET /api/admin/analytics
+   - Auth: admin only
+   - Returns:
+     * Platform stats: total users, companies, jobs, applications
+     * Growth metrics over time
+     * Most in-demand skills
+     * Active companies leaderboard
+
+────────────────────────────────────────────────────────────────────────────────
+4.4  FRONTEND — MESSAGING
+────────────────────────────────────────────────────────────────────────────────
+
+A) /messages page (both company and candidate):
+   - Left panel: conversation list (sorted by last message)
+     * Other person's photo + name
+     * Last message preview
+     * Unread indicator (bold + blue dot)
+     * Job context badge
+   - Right panel: message thread
+     * Messages in chat bubble style (sender = right, receiver = left)
+     * Timestamp on each message
+     * Text input at bottom with Send button
+     * Auto-scroll to newest
+   - Real-time updates via WebSocket
+
+B) Message icon in navbar:
+   - Badge with unread count
+   - Click → go to /messages
+
+C) "Message Candidate" button on:
+   - Application detail (company side)
+   - Candidate profile (company side)
+   - Opens conversation or creates new one
+
+────────────────────────────────────────────────────────────────────────────────
+4.5  FRONTEND — ANALYTICS DASHBOARDS
+────────────────────────────────────────────────────────────────────────────────
+
+A) /company/analytics:
+   - Charts (use recharts or chart.js):
+     * Line chart: applications over time
+     * Funnel chart: pipeline conversion
+     * Bar chart: applications per job
+     * Pie chart: candidate locations
+   - Key metrics cards: time to hire, response rate, fill rate
+
+B) /candidate/dashboard (enhance):
+   - Application success rate
+   - Match score trend
+   - Suggested skills to learn (based on gap analysis)
+
+C) /admin/analytics:
+   - Platform growth charts
+   - User registration trend
+   - Most popular jobs/skills
+
+
+================================================================================
+                    PHASE 5 — POLISH, SECURITY & ADVANCED FEATURES
+================================================================================
+Goal: Production-ready polish, team features, privacy, and advanced tools.
+Estimated effort: 5-7 days
+
+────────────────────────────────────────────────────────────────────────────────
+5.1  TEAM MANAGEMENT (Company)
+────────────────────────────────────────────────────────────────────────────────
+
+A) Database: `company_members` table
+   - id (UUID, PK)
+   - company_id (FK → company_profiles.id)
+   - user_id (FK → users.id)
+   - role (enum: 'owner', 'admin', 'recruiter', 'viewer')
+   - invited_by (FK → users.id)
+   - status (enum: 'pending', 'active', 'deactivated')
+   - invited_at, joined_at
+
+B) Endpoints:
+   - POST /api/company/members/invite — send invite by email
+   - GET /api/company/members — list team members
+   - PATCH /api/company/members/:id/role — change role
+   - DELETE /api/company/members/:id — remove member
+
+C) Frontend: /company/settings/team
+   - Invite by email
+   - Role assignment dropdown
+   - Remove member
+
+────────────────────────────────────────────────────────────────────────────────
+5.2  PRIVACY CONTROLS (Candidate)
+────────────────────────────────────────────────────────────────────────────────
+
+A) Database: Add to candidates table:
+   - profile_visibility ('public', 'applied_only', 'hidden')
+   - show_email (boolean, default false)
+   - show_phone (boolean, default false)
+
+B) Backend: Respect visibility in search/browse endpoints
+   - 'public' → visible in talent search
+   - 'applied_only' → visible only to companies where candidate applied
+   - 'hidden' → only visible to admin
+
+C) Frontend: /settings/privacy
+   - Toggle: profile visible in talent pool
+   - Toggle: show email to companies
+   - Toggle: show phone to companies
+
+────────────────────────────────────────────────────────────────────────────────
+5.3  SECURITY HARDENING
+────────────────────────────────────────────────────────────────────────────────
+
+A) Rate limiting:
+   - Login: 5 attempts per 15 minutes per IP
+   - Registration: 3 per hour per IP
+   - API calls: 100 per minute per user
+   - CV upload: 10 per hour per user
+   - Use express-rate-limit
+
+B) Input validation:
+   - Validate all inputs with Joi or Zod
+   - Sanitize HTML in text fields (prevent XSS)
+   - SQL injection prevention (already handled by Sequelize)
+
+C) File upload security:
+   - Validate file types (PDF only for CVs, images for photos)
+   - File size limits (5MB for CVs, 2MB for photos)
+   - Virus scanning (optional, use ClamAV)
+   - Store outside web root with signed URLs (or use upload middleware)
+
+D) CORS configuration:
+   - Restrict to specific origins
+   - Proper headers
+
+E) JWT improvements:
+   - Token expiry (1 hour access, 7 day refresh)
+   - Refresh token rotation
+   - Logout invalidation (token blacklist or short expiry)
+
+────────────────────────────────────────────────────────────────────────────────
+5.4  RESUME VERSIONING
+────────────────────────────────────────────────────────────────────────────────
+
+A) Allow candidates to upload multiple CVs:
+   - "General CV", "AI/ML focused CV", "Frontend focused CV"
+   - Choose which CV to use when applying to a job
+   - Each CV gets its own CandidateMatrix
+
+B) Database: Add to cv_files table:
+   - label (string, nullable) — user-friendly name
+   - is_primary (boolean, default false)
+
+────────────────────────────────────────────────────────────────────────────────
+5.5  UI/UX POLISH
+────────────────────────────────────────────────────────────────────────────────
+
+A) Mobile responsive:
+   - Test all pages on mobile viewport
+   - Collapsible sidebar → hamburger menu
+   - Responsive tables → card view on mobile
+   - Touch-friendly Kanban (horizontal scroll)
+
+B) Loading states:
+   - Skeleton screens everywhere
+   - Optimistic updates for quick actions
+   - Progress bars for file uploads
+
+C) Error handling:
+   - Global error boundary
+   - Friendly error pages (404, 500, 403)
+   - Form validation with inline errors
+   - Toast notifications for all actions
+
+D) Accessibility:
+   - Proper ARIA labels
+   - Keyboard navigation
+   - Color contrast compliance
+   - Screen reader support
+
+E) Dark mode:
+   - Already partially supported via Tailwind
+   - Ensure all custom components respect dark mode
+
+────────────────────────────────────────────────────────────────────────────────
+5.6  DEPLOYMENT PREPARATION
+────────────────────────────────────────────────────────────────────────────────
+
+A) Environment configuration:
+   - Production .env template
+   - Database connection pooling
+   - Redis for caching (optional)
+
+B) Docker setup:
+   - Dockerfile for backend
+   - Dockerfile for frontend (nginx)
+   - docker-compose.yml for full stack
+
+C) CI/CD:
+   - GitHub Actions: lint, test, build, deploy
+   - Staging and production environments
+
+
+================================================================================
+                         FILE STRUCTURE (Target)
+================================================================================
+
+server/
+├── controllers/
+│   ├── authController.ts          (Phase 1)
+│   ├── candidateController.ts     (existing, modify)
+│   ├── companyController.ts       (Phase 1)
+│   ├── jobController.ts           (existing, modify)
+│   ├── matchController.ts         (existing)
+│   ├── applicationController.ts   (Phase 2)
+│   ├── pipelineController.ts      (Phase 3)
+│   ├── notificationController.ts  (Phase 3)
+│   ├── conversationController.ts  (Phase 4)
+│   ├── analyticsController.ts     (Phase 4)
+│   └── dashboardController.ts     (existing, modify)
+├── db/
+│   └── models/
+│       ├── User.ts                (modify)
+│       ├── CompanyProfile.ts      (Phase 1)
+│       ├── Candidate.ts           (modify)
+│       ├── Application.ts         (Phase 2)
+│       ├── PipelineStage.ts       (Phase 3)
+│       ├── Notification.ts        (Phase 3)
+│       ├── ApplicationHistory.ts  (Phase 3)
+│       ├── Conversation.ts        (Phase 4)
+│       ├── Message.ts             (Phase 4)
+│       ├── SavedJob.ts            (Phase 4)
+│       └── CompanyMember.ts       (Phase 5)
+├── middleware/
+│   ├── auth.ts                    (Phase 1 — JWT + role guards)
+│   ├── upload.ts                  (existing)
+│   └── rateLimit.ts               (Phase 5)
+├── routes/
+│   ├── auth.ts                    (Phase 1)
+│   ├── candidate.ts               (Phase 1)
+│   ├── company.ts                 (Phase 1)
+│   ├── jobs.ts                    (existing, modify)
+│   ├── applications.ts            (Phase 2)
+│   ├── pipeline.ts                (Phase 3)
+│   ├── notifications.ts           (Phase 3)
+│   ├── conversations.ts           (Phase 4)
+│   └── analytics.ts               (Phase 4)
+└── services/
+    ├── qwen.ts                    (existing)
+    ├── matching.ts                (existing)
+    ├── notificationService.ts     (Phase 3)
+    └── reportService.ts           (existing)
+
+client/src/
+├── pages/
+│   ├── auth/
+│   │   ├── Login.tsx              (Phase 1)
+│   │   └── Register.tsx           (Phase 1)
+│   ├── candidate/
+│   │   ├── Dashboard.tsx          (Phase 1)
+│   │   ├── Profile.tsx            (Phase 1)
+│   │   ├── BrowseJobs.tsx         (Phase 2)
+│   │   ├── JobDetail.tsx          (Phase 2)
+│   │   ├── Applications.tsx       (Phase 2)
+│   │   ├── SavedJobs.tsx          (Phase 4)
+│   │   └── Messages.tsx           (Phase 4)
+│   ├── company/
+│   │   ├── Dashboard.tsx          (Phase 1)
+│   │   ├── Profile.tsx            (Phase 1)
+│   │   ├── Jobs.tsx               (Phase 2)
+│   │   ├── Applications.tsx       (Phase 2)
+│   │   ├── Pipeline.tsx           (Phase 3)
+│   │   ├── TalentSearch.tsx       (Phase 3)
+│   │   ├── Messages.tsx           (Phase 4)
+│   │   ├── Analytics.tsx          (Phase 4)
+│   │   └── Settings.tsx           (Phase 5)
+│   ├── admin/                     (existing, modify)
+│   └── Notifications.tsx          (Phase 3)
+├── components/
+│   ├── KanbanBoard.tsx            (Phase 3)
+│   ├── NotificationBell.tsx       (Phase 3)
+│   ├── ChatWindow.tsx             (Phase 4)
+│   ├── ConversationList.tsx       (Phase 4)
+│   └── ... (existing + new)
+└── layouts/
+    ├── AdminLayout.tsx            (existing, modify)
+    ├── CandidateLayout.tsx        (Phase 1)
+    └── CompanyLayout.tsx          (Phase 1)
+
+
+================================================================================
+                    PHASE 6 — AI-POWERED FEATURES
+================================================================================
+Goal: Leverage Qwen LLM to add AI tools for both candidates and companies.
+      These features differentiate the platform from competitors.
+Estimated effort: 7-10 days
+
+────────────────────────────────────────────────────────────────────────────────
+6.1  CV FIXER / IMPROVER (Candidate)
+────────────────────────────────────────────────────────────────────────────────
+
+What: AI analyzes the candidate's CV and gives actionable suggestions to
+improve it — formatting, content gaps, weak bullet points, missing keywords.
+
+A) Backend:
+   - POST /api/ai/cv-review
+   - Auth: candidate only
+   - Input: candidateId (uses their uploaded CV text)
+   - LLM prompt analyzes CV for:
+     * Weak action verbs ("worked on" → "engineered", "did" → "implemented")
+     * Missing quantifiable achievements ("improved performance" → "improved by 40%")
+     * Formatting issues (inconsistent dates, missing sections)
+     * Missing keywords for their target roles
+     * Grammar and clarity
+     * Overall CV score (0-100) with breakdown
+   - Returns: { score, sections: [{ section, issues[], suggestions[] }], rewrittenBullets[] }
+
+B) Frontend: /candidate/cv-review
+   - Upload or select existing CV
+   - "Review My CV" button → loading → results
+   - Side-by-side view: Original text | AI suggestions
+   - Each suggestion is clickable: "Apply this fix"
+   - Overall CV score with breakdown (content, formatting, keywords, impact)
+   - "Download Improved CV" button (generates improved version)
+
+C) LLM Service: qwenService.reviewCV(cvText, targetRole?)
+   - Takes CV text and optional target role
+   - Returns structured review with actionable fixes
+
+────────────────────────────────────────────────────────────────────────────────
+6.2  CV TAILOR FOR SPECIFIC JOB (Candidate)
+────────────────────────────────────────────────────────────────────────────────
+
+What: When applying to a specific job, AI tailors the candidate's CV to
+emphasize relevant skills and experience for THAT particular job.
+
+A) Backend:
+   - POST /api/ai/tailor-cv
+   - Auth: candidate only
+   - Input: { candidateId, jobId }
+   - LLM compares candidate CV with job requirements and:
+     * Reorders skills to highlight relevant ones first
+     * Suggests rewriting bullet points to match job keywords
+     * Identifies which experiences to emphasize/de-emphasize
+     * Adds missing keywords from job description
+   - Returns: { tailoredSections[], keyChanges[], matchImprovement }
+
+B) Frontend: Modal or page when candidate clicks "Apply" on a job
+   - Shows: "AI can tailor your CV for this job"
+   - Before/after comparison
+   - Match score improvement preview (e.g., "Score: 65 → 82 with these changes")
+   - Candidate can accept/reject each suggestion
+   - Apply with tailored or original CV
+
+────────────────────────────────────────────────────────────────────────────────
+6.3  COVER LETTER WRITER (Candidate)
+────────────────────────────────────────────────────────────────────────────────
+
+What: AI generates a personalized cover letter based on the candidate's CV
+and the specific job they're applying to.
+
+A) Backend:
+   - POST /api/ai/cover-letter
+   - Auth: candidate only
+   - Input: { candidateId, jobId, tone?: 'formal' | 'conversational' | 'enthusiastic' }
+   - LLM uses:
+     * Candidate's CV, skills, experience, projects
+     * Job description, required skills, company info
+     * Candidate's headline/bio for personality
+   - Generates a tailored cover letter that:
+     * Opens with why they're interested in this specific company/role
+     * Maps their experience to the job requirements
+     * Highlights 2-3 most relevant achievements
+     * Explains any gaps or career transitions positively
+     * Closes with enthusiasm and call to action
+   - Returns: { coverLetter, alternateVersions[] }
+
+B) Frontend: Part of the "Apply to Job" flow
+   - After clicking "Apply":
+     * Step 1: "Write your own cover letter" OR "Generate with AI"
+     * If AI: choose tone (formal/conversational/enthusiastic)
+     * AI generates draft → editable textarea
+     * "Regenerate" button for a different version
+     * Candidate edits and submits
+   - Also accessible standalone: /candidate/cover-letter-generator
+     * Select a job from applied/saved jobs
+     * Generate and download as PDF
+
+────────────────────────────────────────────────────────────────────────────────
+6.4  JOB POSTING FIXER / OPTIMIZER (Company)
+────────────────────────────────────────────────────────────────────────────────
+
+What: AI reviews and improves job postings for clarity, inclusivity,
+SEO, and candidate attraction.
+
+A) Backend:
+   - POST /api/ai/review-job-posting
+   - Auth: company only
+   - Input: { title, description, mustHaveSkills, niceToHaveSkills }
+   - LLM analyzes job posting for:
+     * Clarity: vague requirements → specific ones
+     * Inclusivity: biased language detection ("rockstar", "ninja", gendered terms)
+     * SEO: missing keywords that candidates search for
+     * Length: too long/short, optimal structure
+     * Realistic requirements: "10 years React experience" when React is 11 years old
+     * Skill overload: too many "must-have" skills discouraging good candidates
+     * Missing info: no salary range, no remote/onsite clarity, no growth opportunities
+     * Tone: too corporate/cold vs welcoming
+   - Returns: { score, issues[], suggestions[], rewrittenDescription, improvedTitle }
+
+B) Frontend: Button on job creation/edit page
+   - "Optimize with AI" button next to the job description field
+   - Side panel shows:
+     * Job posting score (0-100)
+     * Issues with severity (red/yellow/green)
+     * Suggested rewrites (click to apply)
+     * Inclusivity report
+     * Readability score
+   - "Apply All Suggestions" button → updates the form fields
+
+────────────────────────────────────────────────────────────────────────────────
+6.5  JOB DESCRIPTION GENERATOR (Company)
+────────────────────────────────────────────────────────────────────────────────
+
+What: Generate a complete job description from minimal input —
+just a title and a few keywords.
+
+A) Backend:
+   - POST /api/ai/generate-job-description
+   - Auth: company only
+   - Input: { title, skills?: string[], seniorityLevel?, locationType?, industry? }
+   - LLM generates complete job posting:
+     * Role summary
+     * Responsibilities (5-8 bullet points)
+     * Requirements (must-have skills, experience)
+     * Nice-to-have qualifications
+     * What we offer / benefits
+     * About the company section (if company profile filled)
+   - Returns: { description, mustHaveSkills[], niceToHaveSkills[],
+     suggestedSeniority, suggestedMinYears }
+
+B) Frontend: Alternative to manual job creation
+   - /company/jobs/new → "Quick Create with AI" tab
+   - Minimal form: job title, key skills (tags), seniority dropdown
+   - "Generate" button → AI fills in the full description
+   - Editable before publishing
+
+────────────────────────────────────────────────────────────────────────────────
+6.6  INTERVIEW QUESTION GENERATOR (Company)
+────────────────────────────────────────────────────────────────────────────────
+
+What: AI generates tailored interview questions based on the job requirements
+and the specific candidate's profile.
+
+A) Backend:
+   - POST /api/ai/interview-questions
+   - Auth: company only
+   - Input: { jobId, candidateId?, questionTypes?: ['technical', 'behavioral',
+     'situational', 'culture-fit'] }
+   - LLM generates questions:
+     * Technical: based on job's required skills ("Explain React's reconciliation")
+     * Behavioral: STAR-format questions relevant to the role
+     * Situational: role-specific scenarios
+     * Candidate-specific: based on their CV gaps or interesting projects
+     * Scoring rubric for each question (what a good answer looks like)
+   - Returns: { questions: [{ question, type, difficulty, expectedAnswer,
+     scoringCriteria, relatedSkill }] }
+
+B) Frontend: /company/jobs/:id/interview-prep
+   - Select candidate (or generate generic for the role)
+   - Choose question types (checkboxes)
+   - Choose difficulty level
+   - AI generates 10-15 questions
+   - Each question shows: the question, what to look for, scoring criteria
+   - "Copy all" / "Print" / "Download as PDF"
+   - Save generated questions to the application record
+
+────────────────────────────────────────────────────────────────────────────────
+6.7  CANDIDATE SUMMARY / PITCH GENERATOR (Company)
+────────────────────────────────────────────────────────────────────────────────
+
+What: AI generates a brief executive summary of a candidate — useful when
+a recruiter needs to present candidates to a hiring manager.
+
+A) Backend:
+   - POST /api/ai/candidate-summary
+   - Auth: company only
+   - Input: { candidateId, jobId }
+   - LLM generates:
+     * 3-4 sentence executive summary
+     * Key strengths (top 3)
+     * Potential concerns (top 2)
+     * Why this candidate for this role (specific match reasoning)
+     * Comparison points (vs. other candidates if multiple)
+   - Returns: { summary, strengths[], concerns[], fitReasoning }
+
+B) Frontend: Button on candidate detail drawer
+   - "Generate AI Summary" button
+   - Shows formatted summary card
+   - Copy to clipboard / Add to notes
+
+────────────────────────────────────────────────────────────────────────────────
+6.8  SKILL GAP ANALYSIS & LEARNING RECOMMENDATIONS (Candidate)
+────────────────────────────────────────────────────────────────────────────────
+
+What: AI analyzes the candidate's skills vs. their desired roles/jobs and
+recommends specific skills to learn + resources.
+
+A) Backend:
+   - POST /api/ai/skill-gap-analysis
+   - Auth: candidate only
+   - Input: { candidateId, targetJobIds?: string[], targetRole?: string }
+   - LLM analyzes:
+     * Current skills vs. market demand for their target role
+     * Which missing skills would have the highest impact on their match scores
+     * Priority order (learn X before Y because...)
+     * Time estimates (X can be learned in ~2 weeks, Y needs ~3 months)
+   - Returns: { gaps: [{ skill, importance, currentLevel, requiredLevel,
+     learningTime, impactOnScore }], recommendations: string[] }
+
+B) Frontend: /candidate/skill-gap
+   - Select target role or target jobs from saved/applied
+   - AI generates gap analysis
+   - Visual: current skills (green) vs missing skills (red) radar chart
+   - Priority list: skills to learn, sorted by impact
+   - Each skill shows estimated learning time and score impact
+
+────────────────────────────────────────────────────────────────────────────────
+6.9  SALARY ESTIMATOR (Both)
+────────────────────────────────────────────────────────────────────────────────
+
+What: AI estimates salary range based on role, skills, experience, and location.
+
+A) Backend:
+   - POST /api/ai/salary-estimate
+   - Auth: any logged-in user
+   - Input: { role, skills[], yearsExperience, country, city? }
+   - LLM estimates based on general market knowledge:
+     * Salary range (min, median, max)
+     * How each factor affects the range
+     * Comparison to market average
+   - Returns: { min, median, max, currency, factors[], marketComparison }
+
+B) Frontend:
+   - Candidates: widget on dashboard or profile page
+   - Companies: widget on job creation page ("Suggested salary range")
+   - Simple display: salary range bar chart
+
+────────────────────────────────────────────────────────────────────────────────
+6.10  AI CHAT ASSISTANT (Both)
+────────────────────────────────────────────────────────────────────────────────
+
+What: A floating chat widget where users can ask AI questions about
+the platform, their profile, job search tips, etc.
+
+A) Backend:
+   - POST /api/ai/chat
+   - Auth: any logged-in user
+   - Input: { message, conversationHistory[], context? }
+   - Context-aware: knows the user's role, profile, current page
+   - For candidates: "How can I improve my profile?", "What jobs match me best?"
+   - For companies: "Help me write a better job description",
+     "Summarize today's applications"
+   - Returns: { response, suggestedActions?: [] }
+
+B) Frontend: Floating chat bubble (bottom-right)
+   - Expandable chat window
+   - Message history within session
+   - Quick-action buttons ("Improve my CV", "Find matching jobs")
+   - Minimizable
+
+
+================================================================================
+               PHASE 6 — FILE STRUCTURE ADDITIONS
+================================================================================
+
+server/services/
+├── qwen.ts                        (existing — add new methods)
+│   ├── reviewCV()                 (6.1)
+│   ├── tailorCV()                 (6.2)
+│   ├── generateCoverLetter()      (6.3)
+│   ├── reviewJobPosting()         (6.4)
+│   ├── generateJobDescription()   (6.5)
+│   ├── generateInterviewQs()      (6.6)
+│   ├── generateCandidateSummary() (6.7)
+│   ├── analyzeSkillGaps()         (6.8)
+│   ├── estimateSalary()           (6.9)
+│   └── chatAssistant()            (6.10)
+
+server/controllers/
+└── aiController.ts                (Phase 6 — all AI endpoints)
+
+server/routes/
+└── ai.ts                          (Phase 6 — all AI routes)
+
+client/src/pages/
+├── candidate/
+│   ├── CvReview.tsx               (6.1)
+│   ├── CoverLetterGenerator.tsx   (6.3)
+│   └── SkillGapAnalysis.tsx       (6.8)
+├── company/
+│   ├── InterviewPrep.tsx          (6.6)
+│   └── JobDescriptionGenerator.tsx (6.5)
+
+client/src/components/
+├── AiChatWidget.tsx               (6.10)
+├── CvTailorModal.tsx              (6.2)
+├── JobPostingReviewPanel.tsx      (6.4)
+├── CandidateSummaryCard.tsx       (6.7)
+└── SalaryEstimator.tsx            (6.9)
+
+
+================================================================================
+                         SUMMARY — ESTIMATED TIMELINE
+================================================================================
+
+Phase 1: Auth, Profiles, Dashboards .............. 5-7 days
+Phase 2: Job Browsing & Applications ............. 4-6 days
+Phase 3: Kanban Pipeline & Notifications ......... 5-7 days
+Phase 4: Messaging & Analytics ................... 5-7 days
+Phase 5: Polish, Security & Advanced ............. 5-7 days
+Phase 6: AI-Powered Features .................... 7-10 days
+                                                   --------
+Total estimated:                                   31-44 days
+
+Note: These estimates assume focused development time. Testing, bug fixes,
+and iterations may add 20-30% more time.
+
+Phase 6 can be built incrementally — prioritize the highest-impact features:
+  1st: CV Fixer (6.1) + Cover Letter Writer (6.3) — candidate retention
+  2nd: Job Posting Fixer (6.4) + Job Description Generator (6.5) — company value
+  3rd: Interview Questions (6.6) + Candidate Summary (6.7) — hiring efficiency
+  4th: CV Tailor (6.2) + Skill Gap (6.8) — candidate growth
+  5th: Salary Estimator (6.9) + AI Chat (6.10) — platform stickiness
+
+================================================================================
+                              END OF PLAN
+================================================================================

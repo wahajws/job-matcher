@@ -11,6 +11,8 @@ import {
   Match,
   AdminNote,
   CandidateTag,
+  CompanyProfile,
+  PipelineStage,
 } from './models/index.js';
 import { randomUUID } from 'crypto';
 
@@ -375,6 +377,34 @@ async function seed() {
         jobs.push(job);
       }
       console.log(`✓ Seeded ${SEED_JOBS} job(s) with diverse data`);
+    }
+
+    // Seed default pipeline stages for all existing company profiles
+    const companyProfiles = await CompanyProfile.findAll();
+    const DEFAULT_STAGES = [
+      { name: 'Applied', order: 0, color: '#6B7280', is_default: true },
+      { name: 'Screening', order: 1, color: '#3B82F6', is_default: true },
+      { name: 'Interview', order: 2, color: '#8B5CF6', is_default: true },
+      { name: 'Offer', order: 3, color: '#F59E0B', is_default: true },
+      { name: 'Hired', order: 4, color: '#10B981', is_default: true },
+      { name: 'Rejected', order: 5, color: '#EF4444', is_default: true },
+    ];
+
+    for (const cp of companyProfiles) {
+      const existingStages = await PipelineStage.count({ where: { company_id: cp.id } });
+      if (existingStages === 0) {
+        for (const stage of DEFAULT_STAGES) {
+          await PipelineStage.create({
+            id: randomUUID(),
+            company_id: cp.id,
+            name: stage.name,
+            order: stage.order,
+            color: stage.color,
+            is_default: stage.is_default,
+          });
+        }
+        console.log(`✓ Seeded default pipeline stages for company: ${cp.company_name}`);
+      }
     }
 
     console.log('Database seeding completed successfully!');

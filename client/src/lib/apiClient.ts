@@ -23,9 +23,9 @@ export async function apiRequest<T = any>(
   const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;
   const token = getAuthToken();
 
-  const headers: HeadersInit = {
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...options.headers,
+    ...(options.headers as Record<string, string>),
   };
 
   if (token) {
@@ -78,6 +78,14 @@ export async function apiDelete<T = any>(endpoint: string): Promise<T> {
   return apiRequest<T>(endpoint, { method: 'DELETE' });
 }
 
+// PATCH request
+export async function apiPatch<T = any>(endpoint: string, data?: any): Promise<T> {
+  return apiRequest<T>(endpoint, {
+    method: 'PATCH',
+    body: data ? JSON.stringify(data) : undefined,
+  });
+}
+
 // Upload files
 export async function apiUpload<T = any>(
   endpoint: string,
@@ -86,7 +94,7 @@ export async function apiUpload<T = any>(
   const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;
   const token = getAuthToken();
 
-  const headers: HeadersInit = {};
+  const headers: Record<string, string> = {};
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }

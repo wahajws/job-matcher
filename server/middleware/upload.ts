@@ -11,7 +11,7 @@ const uploadDirRelative = process.env.UPLOAD_DIR || './uploads/cvs';
 const uploadDir = path.isAbsolute(uploadDirRelative) 
   ? uploadDirRelative 
   : path.resolve(process.cwd(), uploadDirRelative);
-const maxFileSize = parseInt(process.env.MAX_FILE_SIZE || '10485760', 10); // 10MB default
+const maxFileSize = parseInt(process.env.MAX_FILE_SIZE || '5242880', 10); // 5MB default for CVs
 
 // Ensure upload directory exists synchronously (multer needs sync operations)
 if (!existsSync(uploadDir)) {

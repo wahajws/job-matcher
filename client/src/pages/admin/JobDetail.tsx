@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRoute, Link } from 'wouter';
-import { getJob, getMatchesForJob, shortlistCandidate, rejectCandidate, getCandidate, addNote, generateJobReport, getJobReport } from '@/api';
+import { getJob, getMatchesForJob, shortlistCandidate, rejectCandidate, getCandidate, addNote, generateJobReport, getJobReport, updateJobMatrix, calculateMatches } from '@/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -124,7 +124,7 @@ export default function JobDetail() {
   };
 
   const shortlistMutation = useMutation({
-    mutationFn: (candidateId: string) => shortlistCandidate(jobId, candidateId),
+    mutationFn: (matchId: string) => shortlistCandidate(matchId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/jobs', jobId, 'matches'] });
       toast({ title: 'Candidate shortlisted' });
@@ -134,7 +134,7 @@ export default function JobDetail() {
   });
 
   const rejectMutation = useMutation({
-    mutationFn: (candidateId: string) => rejectCandidate(jobId, candidateId),
+    mutationFn: (matchId: string) => rejectCandidate(matchId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/jobs', jobId, 'matches'] });
       toast({ title: 'Candidate rejected' });
@@ -148,6 +148,37 @@ export default function JobDetail() {
     onSuccess: () => {
       toast({ title: 'Note added' });
       setNoteContent('');
+    },
+  });
+
+  const updateMatrixMutation = useMutation({
+    mutationFn: (matrixData: {
+      requiredSkills: { skill: string; weight: number }[];
+      preferredSkills: { skill: string; weight: number }[];
+      experienceWeight: number;
+      locationWeight: number;
+      domainWeight: number;
+    }) => updateJobMatrix(jobId, matrixData),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/jobs', jobId] });
+      toast({ 
+        title: 'Matrix updated',
+        description: 'Recalculating matches with updated matrix...',
+      });
+      // Trigger recalculation with the new matrix
+      calculateMatches(jobId).then(() => {
+        queryClient.invalidateQueries({ queryKey: ['/api/jobs', jobId, 'matches'] });
+        toast({ title: 'Matches recalculated' });
+      }).catch(() => {
+        toast({ title: 'Match recalculation started', description: 'Results will update shortly.' });
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Failed to update matrix',
+        description: error.message || 'An error occurred',
+        variant: 'destructive',
+      });
     },
   });
 
@@ -304,7 +335,11 @@ export default function JobDetail() {
             <CardTitle className="text-base">Job Matrix</CardTitle>
           </CardHeader>
           <CardContent>
-            <JobMatrixView matrix={job.matrix} />
+            <JobMatrixView
+              matrix={job.matrix}
+              onSave={(matrixData) => updateMatrixMutation.mutateAsync(matrixData)}
+              saving={updateMatrixMutation.isPending}
+            />
           </CardContent>
         </Card>
       )}
@@ -473,9 +508,9 @@ export default function JobDetail() {
         variant={confirmAction?.type === 'reject' ? 'destructive' : 'default'}
         onConfirm={() => {
           if (confirmAction?.type === 'shortlist') {
-            shortlistMutation.mutate(confirmAction.match.candidateId);
+            shortlistMutation.mutate(confirmAction.match.id);
           } else if (confirmAction?.type === 'reject') {
-            rejectMutation.mutate(confirmAction!.match.candidateId);
+            rejectMutation.mutate(confirmAction!.match.id);
           }
         }}
       />

@@ -1,20 +1,29 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Role, User } from '@/types';
-import { login as apiLogin, logout as apiLogout, getCurrentUser } from '@/api';
+import {
+  login as apiLogin,
+  logout as apiLogout,
+  register as apiRegister,
+  getCurrentUser,
+} from '@/api';
 import { setAuthToken } from '@/lib/apiClient';
-import { generateUUID } from '@/utils/uuid';
 
 interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
   theme: 'light' | 'dark';
-  login: (name: string, email: string, role: Role) => void;
-  loginWithCredentials: (username: string, password: string) => Promise<void>;
+  loginWithCredentials: (email: string, password: string) => Promise<void>;
+  registerUser: (data: {
+    email: string;
+    password: string;
+    name: string;
+    role: 'candidate' | 'company';
+  }) => Promise<void>;
   logout: () => void;
-  switchRole: (role: Role) => void;
   toggleTheme: () => void;
   setTheme: (theme: 'light' | 'dark') => void;
+  refreshUser: () => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -24,24 +33,24 @@ export const useAuthStore = create<AuthState>()(
       isAuthenticated: false,
       theme: 'light',
       
-      // Mock login (for demo mode)
-      login: (name: string, email: string, role: Role) => {
-        const user: User = {
-          id: generateUUID(),
-          name,
-          email,
-          role,
-        };
-        set({ user, isAuthenticated: true });
-      },
-      
       // Real API login
-      loginWithCredentials: async (username: string, password: string) => {
+      loginWithCredentials: async (email: string, password: string) => {
         try {
-          const response = await apiLogin(username, password);
+          const response = await apiLogin(email, password);
           set({ user: response.user, isAuthenticated: true });
         } catch (error) {
           console.error('Login failed:', error);
+          throw error;
+        }
+      },
+
+      // Register new user
+      registerUser: async (data) => {
+        try {
+          const response = await apiRegister(data);
+          set({ user: response.user, isAuthenticated: true });
+        } catch (error) {
+          console.error('Registration failed:', error);
           throw error;
         }
       },
@@ -56,11 +65,15 @@ export const useAuthStore = create<AuthState>()(
           set({ user: null, isAuthenticated: false });
         }
       },
-      
-      switchRole: (role: Role) => {
-        const currentUser = get().user;
-        if (currentUser) {
-          set({ user: { ...currentUser, role } });
+
+      refreshUser: async () => {
+        try {
+          const user = await getCurrentUser();
+          set({ user, isAuthenticated: true });
+        } catch (error) {
+          console.error('Failed to refresh user:', error);
+          setAuthToken(null);
+          set({ user: null, isAuthenticated: false });
         }
       },
       

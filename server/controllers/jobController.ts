@@ -1,11 +1,12 @@
 import { Request, Response } from 'express';
 import { Op } from 'sequelize';
-import { Job, JobMatrix } from '../db/models/index.js';
+import { Job, JobMatrix, CompanyProfile, Application, Match } from '../db/models/index.js';
 import { BaseController } from '../db/base/BaseController.js';
 import { qwenService } from '../services/qwen.js';
 import { fetchAndExtractText } from '../utils/htmlParser.js';
 import { pdfParserService } from '../services/pdfParser.js';
 import { randomUUID } from 'crypto';
+import type { AuthRequest } from '../middleware/auth.js';
 
 export class JobController extends BaseController {
   protected model = Job;
@@ -492,6 +493,43 @@ export class JobController extends BaseController {
     });
   }
 
+  async updateMatrix(req: Request, res: Response) {
+    await this.handleRequest(req, res, async () => {
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      if (!id) {
+        throw new Error('Job ID is required');
+      }
+
+      const matrix = await JobMatrix.findOne({ where: { job_id: id } });
+      if (!matrix) {
+        const error: any = new Error('Job matrix not found');
+        error.status = 404;
+        throw error;
+      }
+
+      const { requiredSkills, preferredSkills, experienceWeight, locationWeight, domainWeight } = req.body;
+
+      await matrix.update({
+        required_skills: requiredSkills ?? matrix.required_skills,
+        preferred_skills: preferredSkills ?? matrix.preferred_skills,
+        experience_weight: experienceWeight ?? matrix.experience_weight,
+        location_weight: locationWeight ?? matrix.location_weight,
+        domain_weight: domainWeight ?? matrix.domain_weight,
+      });
+
+      return {
+        id: matrix.id,
+        jobId: matrix.job_id,
+        requiredSkills: matrix.required_skills,
+        preferredSkills: matrix.preferred_skills,
+        experienceWeight: matrix.experience_weight,
+        locationWeight: matrix.location_weight,
+        domainWeight: matrix.domain_weight,
+        generatedAt: matrix.generated_at,
+      };
+    });
+  }
+
   async generateMatrix(req: Request, res: Response) {
     await this.handleRequest(req, res, async () => {
       const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
@@ -510,6 +548,316 @@ export class JobController extends BaseController {
       this.generateMatrixAsync(id as string).catch(console.error);
 
       return { message: 'Matrix generation started', jobId: id };
+    });
+  }
+
+  // ==================== COMPANY JOB MANAGEMENT ====================
+
+  async listMyJobs(req: AuthRequest, res: Response) {
+    await this.handleRequest(req, res, async () => {
+      if (!req.user) {
+        const error: any = new Error('Authentication required');
+        error.status = 401;
+        throw error;
+      }
+
+      const company = await CompanyProfile.findOne({ where: { user_id: req.user.id } });
+      if (!company) {
+        return [];
+      }
+
+      const { status } = req.query;
+      const where: any = { company_id: company.id };
+      if (status && status !== 'all') where.status = status;
+
+      const jobs = await Job.findAll({
+        where,
+        include: [{ model: JobMatrix, as: 'matrix', required: false }],
+        order: [['created_at', 'DESC']],
+      });
+
+      // Get application counts for each job
+      const jobIds = jobs.map((j: any) => j.id);
+      const appCounts: Record<string, number> = {};
+      if (jobIds.length > 0) {
+        const counts = await Application.findAll({
+          where: { job_id: { [Op.in]: jobIds }, status: { [Op.ne]: 'withdrawn' } },
+          attributes: ['job_id', [Job.sequelize!.fn('COUNT', Job.sequelize!.col('id')), 'count']],
+          group: ['job_id'],
+          raw: true,
+        }) as any[];
+        for (const c of counts) {
+          appCounts[c.job_id] = parseInt(c.count, 10);
+        }
+      }
+
+      return jobs.map((j: any) => ({
+        id: j.id,
+        title: j.title,
+        department: j.department,
+        company: j.company,
+        locationType: j.location_type,
+        country: j.country,
+        city: j.city,
+        description: j.description,
+        mustHaveSkills: j.must_have_skills,
+        niceToHaveSkills: j.nice_to_have_skills,
+        minYearsExperience: j.min_years_experience,
+        seniorityLevel: j.seniority_level,
+        status: j.status,
+        deadline: j.deadline,
+        isFeatured: j.is_featured,
+        createdAt: j.created_at,
+        applicationCount: appCounts[j.id] || 0,
+        hasMatrix: !!j.matrix,
+      }));
+    });
+  }
+
+  async createCompanyJob(req: AuthRequest, res: Response) {
+    await this.handleRequest(req, res, async () => {
+      if (!req.user) {
+        const error: any = new Error('Authentication required');
+        error.status = 401;
+        throw error;
+      }
+
+      const company = await CompanyProfile.findOne({ where: { user_id: req.user.id } });
+      if (!company) {
+        const error: any = new Error('Company profile not found. Please complete your profile first.');
+        error.status = 404;
+        throw error;
+      }
+
+      const {
+        title,
+        department,
+        locationType,
+        country,
+        city,
+        description,
+        mustHaveSkills,
+        niceToHaveSkills,
+        minYearsExperience,
+        seniorityLevel,
+        deadline,
+        status,
+      } = req.body;
+
+      if (!title || !description) {
+        const error: any = new Error('Title and description are required');
+        error.status = 400;
+        throw error;
+      }
+
+      const job = await Job.create({
+        id: randomUUID(),
+        title,
+        department: department || 'General',
+        company: company.company_name,
+        company_id: company.id,
+        location_type: locationType || 'onsite',
+        country: country || '',
+        city: city || '',
+        description,
+        must_have_skills: mustHaveSkills || [],
+        nice_to_have_skills: niceToHaveSkills || [],
+        min_years_experience: minYearsExperience || 0,
+        seniority_level: seniorityLevel || 'mid',
+        deadline: deadline || null,
+        status: status || 'draft',
+      });
+
+      // Generate matrix if published
+      if (status === 'published') {
+        this.generateMatrixAsync(job.id).catch(console.error);
+      }
+
+      const createdJob = await Job.findByPk(job.id, {
+        include: [{ model: JobMatrix, as: 'matrix', required: false }],
+      });
+      const j: any = createdJob;
+      return {
+        id: j.id,
+        title: j.title,
+        department: j.department,
+        company: j.company,
+        companyId: j.company_id,
+        locationType: j.location_type,
+        country: j.country,
+        city: j.city,
+        description: j.description,
+        mustHaveSkills: j.must_have_skills,
+        niceToHaveSkills: j.nice_to_have_skills,
+        minYearsExperience: j.min_years_experience,
+        seniorityLevel: j.seniority_level,
+        status: j.status,
+        deadline: j.deadline,
+        isFeatured: j.is_featured,
+        createdAt: j.created_at,
+      };
+    });
+  }
+
+  async updateCompanyJob(req: AuthRequest, res: Response) {
+    await this.handleRequest(req, res, async () => {
+      if (!req.user) {
+        const error: any = new Error('Authentication required');
+        error.status = 401;
+        throw error;
+      }
+
+      const { id } = req.params;
+      const company = await CompanyProfile.findOne({ where: { user_id: req.user.id } });
+      if (!company) {
+        const error: any = new Error('Company profile not found');
+        error.status = 404;
+        throw error;
+      }
+
+      const job = await Job.findByPk(id);
+      if (!job) {
+        const error: any = new Error('Job not found');
+        error.status = 404;
+        throw error;
+      }
+
+      if (job.company_id !== company.id) {
+        const error: any = new Error('Access denied: this job does not belong to your company');
+        error.status = 403;
+        throw error;
+      }
+
+      const updates = req.body;
+      const updateData: any = {};
+      if (updates.title !== undefined) updateData.title = updates.title;
+      if (updates.department !== undefined) updateData.department = updates.department;
+      if (updates.locationType !== undefined) updateData.location_type = updates.locationType;
+      if (updates.country !== undefined) updateData.country = updates.country;
+      if (updates.city !== undefined) updateData.city = updates.city;
+      if (updates.description !== undefined) updateData.description = updates.description;
+      if (updates.mustHaveSkills !== undefined) updateData.must_have_skills = updates.mustHaveSkills;
+      if (updates.niceToHaveSkills !== undefined) updateData.nice_to_have_skills = updates.niceToHaveSkills;
+      if (updates.minYearsExperience !== undefined) updateData.min_years_experience = updates.minYearsExperience;
+      if (updates.seniorityLevel !== undefined) updateData.seniority_level = updates.seniorityLevel;
+      if (updates.deadline !== undefined) updateData.deadline = updates.deadline;
+      if (updates.status !== undefined) updateData.status = updates.status;
+
+      const wasNotPublished = job.status !== 'published';
+      await job.update(updateData);
+
+      // Generate matrix if publishing for the first time
+      if (updates.status === 'published' && wasNotPublished) {
+        this.generateMatrixAsync(job.id).catch(console.error);
+      }
+
+      const updatedJob = await Job.findByPk(id, {
+        include: [{ model: JobMatrix, as: 'matrix', required: false }],
+      });
+      const j: any = updatedJob;
+      return {
+        id: j.id,
+        title: j.title,
+        department: j.department,
+        company: j.company,
+        companyId: j.company_id,
+        locationType: j.location_type,
+        country: j.country,
+        city: j.city,
+        description: j.description,
+        mustHaveSkills: j.must_have_skills,
+        niceToHaveSkills: j.nice_to_have_skills,
+        minYearsExperience: j.min_years_experience,
+        seniorityLevel: j.seniority_level,
+        status: j.status,
+        deadline: j.deadline,
+        isFeatured: j.is_featured,
+        createdAt: j.created_at,
+        hasMatrix: !!j.matrix,
+      };
+    });
+  }
+
+  async getCompanyJob(req: AuthRequest, res: Response) {
+    await this.handleRequest(req, res, async () => {
+      if (!req.user) {
+        const error: any = new Error('Authentication required');
+        error.status = 401;
+        throw error;
+      }
+
+      const { id } = req.params;
+      const company = await CompanyProfile.findOne({ where: { user_id: req.user.id } });
+      if (!company) {
+        const error: any = new Error('Company profile not found');
+        error.status = 404;
+        throw error;
+      }
+
+      const job = await Job.findByPk(id, {
+        include: [{ model: JobMatrix, as: 'matrix', required: false }],
+      });
+
+      if (!job) {
+        const error: any = new Error('Job not found');
+        error.status = 404;
+        throw error;
+      }
+
+      if (job.company_id !== company.id) {
+        const error: any = new Error('Access denied');
+        error.status = 403;
+        throw error;
+      }
+
+      // Get application counts grouped by status
+      const appCounts = await Application.findAll({
+        where: { job_id: id, status: { [Op.ne]: 'withdrawn' } },
+        attributes: ['status', [Job.sequelize!.fn('COUNT', Job.sequelize!.col('id')), 'count']],
+        group: ['status'],
+        raw: true,
+      }) as any[];
+
+      const statusCounts: Record<string, number> = {};
+      let totalApplications = 0;
+      for (const c of appCounts) {
+        statusCounts[c.status] = parseInt(c.count, 10);
+        totalApplications += parseInt(c.count, 10);
+      }
+
+      const j: any = job;
+      return {
+        id: j.id,
+        title: j.title,
+        department: j.department,
+        company: j.company,
+        companyId: j.company_id,
+        locationType: j.location_type,
+        country: j.country,
+        city: j.city,
+        description: j.description,
+        mustHaveSkills: j.must_have_skills,
+        niceToHaveSkills: j.nice_to_have_skills,
+        minYearsExperience: j.min_years_experience,
+        seniorityLevel: j.seniority_level,
+        status: j.status,
+        deadline: j.deadline,
+        isFeatured: j.is_featured,
+        createdAt: j.created_at,
+        hasMatrix: !!j.matrix,
+        totalApplications,
+        statusCounts,
+        matrix: j.matrix ? {
+          id: j.matrix.id,
+          jobId: j.matrix.job_id,
+          requiredSkills: j.matrix.required_skills,
+          preferredSkills: j.matrix.preferred_skills,
+          experienceWeight: j.matrix.experience_weight,
+          locationWeight: j.matrix.location_weight,
+          domainWeight: j.matrix.domain_weight,
+          generatedAt: j.matrix.generated_at,
+        } : undefined,
+      };
     });
   }
 

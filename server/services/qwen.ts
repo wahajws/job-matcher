@@ -338,7 +338,7 @@ Return ONLY valid JSON, no additional text.`;
   }
 
   async generateCandidateMatrix(cvText: string): Promise<any> {
-    const prompt = `You are a CV parsing expert. Extract ALL structured information from this CV thoroughly.
+    const prompt = `You are a CV parsing expert. Extract ALL structured information from this CV thoroughly and accurately.
 
 ${cvText}
 
@@ -361,6 +361,29 @@ Return a JSON object with this exact structure:
   "confidence": 85
 }
 
+CRITICAL EXPERIENCE EXTRACTION RULES:
+1. "totalYearsExperience" counts ONLY paid/professional work experience:
+   - Full-time employment ✅
+   - Part-time employment ✅
+   - Freelance / contract / consulting work (paid client work) ✅
+   - Internships at a company (count actual duration) ✅
+   - Co-op / work-integrated learning at a company ✅
+2. DO NOT count these as professional experience:
+   - University/college club roles (e.g., "Machine Learning Lead at GDG UPM") ❌
+   - Hackathon participations ❌
+   - Course/university group projects ❌
+   - Personal/side projects (not paid) ❌
+   - Volunteer roles ❌
+   - Event organizing, emcee, committee roles ❌
+   - Workshop participation ❌
+3. Calculate total years by summing durations of ONLY paid/professional work
+4. Be ACCURATE — count months and convert to years. Round to nearest integer.
+   - E.g., 5 months internship = 0.4 years → round to 0
+   - E.g., 8 months internship + 6 months job = 1.2 years → round to 1
+   - E.g., 18 months of employment = 1.5 → round to 2
+5. Look at dates carefully: if someone worked from Jan 2022 to Dec 2024, that is 3 years
+6. If a candidate is a current student with only a short internship, totalYearsExperience should likely be 0 or 1
+
 CRITICAL SKILL EXTRACTION RULES:
 1. Extract EVERY technical skill mentioned — include ALL programming languages, frameworks, libraries, tools, platforms, databases, cloud services, APIs, methodologies
 2. Include BOTH explicit skills AND implied skills:
@@ -370,12 +393,20 @@ CRITICAL SKILL EXTRACTION RULES:
    - If CV mentions "trained neural networks" → extract: "Neural Networks", "Deep Learning", "Machine Learning"
    - If CV mentions "deployed on AWS Lambda" → extract: "AWS", "AWS Lambda", "Serverless", "Cloud Computing"
    - If CV mentions "React dashboard" → extract: "React", "JavaScript", "Frontend Development"
+   - If CV mentions "Node.js backend" or "Express API" → extract: "Node.js", "Express.js", "Backend Development", "REST API"
+   - If CV mentions "full-stack" or built both frontend + backend → extract: "Full-Stack Development"
 3. For AI/ML candidates, specifically look for and extract:
    - LLM-related: LLM, GPT, OpenAI, Claude, Prompt Engineering, Fine-tuning, RAG, LangChain, Vector DB, Embeddings
    - ML frameworks: TensorFlow, PyTorch, Scikit-learn, Keras, Hugging Face, Transformers
    - ML domains: NLP, Computer Vision, Generative AI, Reinforcement Learning, Data Science
    - Data tools: Pandas, NumPy, Jupyter, MLflow, Weights & Biases
-4. Set skill levels accurately: "beginner", "intermediate", "advanced", "expert"
+4. Set skill levels based on EVIDENCE in the CV:
+   - "expert": 5+ years professional use with deep specialization
+   - "advanced": 3-5 years professional use OR 2+ years with significant production projects
+   - "intermediate": 1-3 years professional use OR extensive project/academic use
+   - "beginner": Only used in coursework, hackathons, or basic exposure
+   - IMPORTANT: University course projects and hackathons indicate "beginner" to "intermediate" at most
+   - Only rate as "advanced" or "expert" if there is evidence of professional/production use
 5. Include the number of years of experience for each skill if inferable
 
 CRITICAL DOMAIN EXTRACTION:
@@ -385,9 +416,9 @@ CRITICAL DOMAIN EXTRACTION:
 - Be thorough: if candidate worked on AI projects, include "AI/ML" AND "Generative AI" (if applicable) in domains
 
 CRITICAL ROLES EXTRACTION:
-- Extract roles with special attention to seniority indicators
-- If role contains "Intern", "Internship", "Trainee" → mark clearly in roles array
-- Prioritize the most prominent/current role
+- Extract all roles the candidate has held
+- Include the most senior / most recent role prominently
+- Include both formal job titles AND functional roles (e.g., if someone did full-stack work, include "Full-Stack Developer")
 
 Return ONLY valid JSON, no additional text.`;
 
@@ -425,6 +456,16 @@ CRITICAL RULES:
 4. GENERIC skills should have weight 30-50
 5. Do NOT include pure soft skills in requiredSkills — only technical skills
 6. Use EXACT technology names — "React" ≠ "React Native", "Angular" ≠ "AngularJS"
+
+MATCHING WEIGHT RULES (experienceWeight, locationWeight, domainWeight):
+- These control how much each factor matters when matching candidates to this job
+- experienceWeight MUST vary by seniority level:
+  * INTERNSHIP roles (title contains "Intern" or 0 years required): experienceWeight = 5 (experience barely matters)
+  * JUNIOR roles (1-2 years required): experienceWeight = 10
+  * MID-LEVEL roles (2-5 years required): experienceWeight = 20
+  * SENIOR roles (5+ years required): experienceWeight = 25
+  * LEAD/PRINCIPAL roles (7+ years required): experienceWeight = 30
+- For internships, skills matter most — set experienceWeight LOW (5)
 
 IMPORTANT — "semanticKeywords" field:
 - Extract 5-15 semantic keywords/phrases that describe what this job is REALLY about
@@ -512,13 +553,23 @@ Return ONLY valid JSON, no additional text.`;
     // Infer candidate seniority from experience + roles
     const candidateYears = candidateMatrix.total_years_experience || 0;
     const candidateRoles = (candidateInfo.roles || candidateMatrix.roles || []).map((r: string) => r.toLowerCase());
-    const isStudent = candidateRoles.some((r: string) => ['student', 'intern', 'trainee', 'fresh graduate'].includes(r)) 
-      || (candidateInfo.headline || '').toLowerCase().includes('student')
-      || (candidateInfo.headline || '').toLowerCase().includes('undergraduate')
-      || (candidateInfo.headline || '').toLowerCase().includes('fresh grad');
+    
+    // Detect student/intern candidates from headline and roles
+    const headlineLower = (candidateInfo.headline || '').toLowerCase();
+    const studentKeywords = ['student', 'undergraduate', 'undergrad', 'fresh grad', 'fresh graduate', 'intern', 'trainee'];
+    const hasStudentHeadline = studentKeywords.some(kw => headlineLower.includes(kw));
+    const hasStudentRole = candidateRoles.some((r: string) => 
+      ['student', 'intern', 'trainee', 'fresh graduate', 'undergraduate'].includes(r) ||
+      r.includes('student') || r.includes('undergraduate')
+    );
+    
+    // Flag as student/intern if:
+    // 1. They have 0-1 years experience AND headline/roles suggest student, OR
+    // 2. They have 0 years experience (regardless of headline)
+    const isStudent = (candidateYears <= 1 && (hasStudentHeadline || hasStudentRole)) || candidateYears === 0;
     
     let candidateSeniorityLevel = 2; // default mid
-    if (isStudent || candidateYears === 0) candidateSeniorityLevel = 0;
+    if (isStudent) candidateSeniorityLevel = 0;
     else if (candidateYears <= 2) candidateSeniorityLevel = 1;
     else if (candidateYears <= 5) candidateSeniorityLevel = 2;
     else if (candidateYears <= 8) candidateSeniorityLevel = 3;
@@ -526,17 +577,43 @@ Return ONLY valid JSON, no additional text.`;
 
     const jobSeniorityStr = (jobInfo.seniorityLevel || 'mid').toLowerCase();
     const jobSeniorityLevel = seniorityLevels[jobSeniorityStr] !== undefined ? seniorityLevels[jobSeniorityStr] : 2;
-    const seniorityGap = jobSeniorityLevel - candidateSeniorityLevel; // positive = candidate is under-qualified
+    const seniorityGap = jobSeniorityLevel - candidateSeniorityLevel; // positive = under-qualified, negative = overqualified
+    const isInternshipJob = jobSeniorityStr === 'internship' || jobSeniorityStr === 'intern' || (jobInfo.minYearsExperience === 0 && jobInfo.title?.toLowerCase().includes('intern'));
 
-    const prompt = `You are an expert technical recruiter. Evaluate how well this candidate matches this job.
-BE REALISTIC AND STRICT — do not inflate scores. A student/intern should NOT score above 50 for senior roles.
+    // Dynamic weights based on job seniority level
+    let skillsWeight = 35;
+    let experienceWeight = 30;
+    let domainWeight = 15;
+    let locationWeight = 20;
+    
+    if (isInternshipJob) {
+      // For internships: skills matter most, experience barely matters
+      skillsWeight = 50;
+      experienceWeight = 10;
+      domainWeight = 15;
+      locationWeight = 25;
+    } else if (jobSeniorityLevel <= 1) {
+      // Junior: skills still most important
+      skillsWeight = 40;
+      experienceWeight = 20;
+      domainWeight = 15;
+      locationWeight = 25;
+    } else if (jobSeniorityLevel >= 4) {
+      // Lead/Principal: experience matters a lot
+      skillsWeight = 30;
+      experienceWeight = 35;
+      domainWeight = 15;
+      locationWeight = 20;
+    }
+
+    const prompt = `You are an expert technical recruiter. Evaluate how well this candidate matches this specific job.
+Be fair and balanced — not too harsh, not too generous. Each job is different, so scores MUST vary per job.
 
 === CANDIDATE PROFILE ===
 Name: ${candidateInfo.name}
 Headline: ${candidateInfo.headline || 'Not specified'}
 Country: ${candidateInfo.country || 'Unknown'}
-Total Professional Experience: ${candidateMatrix.total_years_experience || 0} years
-Is Student/Intern/Fresh Graduate: ${isStudent ? 'YES' : 'No'}
+Total Experience: ${candidateMatrix.total_years_experience || 0} years
 Roles: ${JSON.stringify(candidateInfo.roles || candidateMatrix.roles || [])}
 Domains: ${JSON.stringify(candidateMatrix.domains || [])}
 Skills: ${candidateSkills}
@@ -554,97 +631,96 @@ Required Skills: ${jobRequiredSkills}
 Preferred Skills: ${jobPreferredSkills}
 Job Description (excerpt): ${(jobInfo.description || '').substring(0, 2000)}
 
-=== SENIORITY GAP ANALYSIS ===
-Candidate Level: ${isStudent ? 'Student/Intern (Level 0)' : `Level ${candidateSeniorityLevel}`} (${candidateYears} years experience)
-Job Level: ${jobSeniorityStr} (Level ${jobSeniorityLevel}) (requires ${jobInfo.minYearsExperience || 0}+ years)
-Seniority Gap: ${seniorityGap > 0 ? `Candidate is ${seniorityGap} level(s) BELOW the job requirement` : seniorityGap < 0 ? `Candidate is ${Math.abs(seniorityGap)} level(s) ABOVE the job requirement` : 'Good match'}
+=== SENIORITY CONTEXT ===
+Candidate Experience Level: ${candidateYears} years${isStudent ? ' (Student/Undergraduate)' : ''}
+Job Seniority: ${jobSeniorityStr} (requires ${jobInfo.minYearsExperience || 0}+ years)
+${seniorityGap > 0 ? `⚠ The candidate is ${seniorityGap} level(s) BELOW the job requirement (under-qualified).` : seniorityGap < 0 && isInternshipJob ? `⚠ The candidate is ${Math.abs(seniorityGap)} level(s) ABOVE the job requirement (overqualified). An experienced developer applying for an internship is a BAD fit.` : seniorityGap < 0 ? `✅ The candidate EXCEEDS the experience requirement by ${Math.abs(seniorityGap)} level(s). This is a POSITIVE — more experience is better for this role.` : 'Seniority levels are a good match.'}
 
 === SCORING INSTRUCTIONS ===
-Score this candidate against this job in 4 dimensions (each 0-100):
+Score this candidate against THIS SPECIFIC JOB in 4 dimensions (each 0-100).
+CRITICAL: The same candidate should score VERY DIFFERENTLY for different jobs. A student might score 75 for an internship but 30 for a senior role.
+${isInternshipJob ? 'An experienced developer (3+ years) is a BAD fit for this internship — they should score LOW.' : 'For this role, more experience is ALWAYS better. Never penalize a candidate for having too much experience.'}
 
 1. **skills** (0-100): How well do the candidate's skills match the job's required and preferred skills?
-   - Use SEMANTIC matching: "GenAI" = "Generative AI" = relates to "LLM"
-   - "React" implies JavaScript/TypeScript, "LangChain" implies LLM/GenAI
+   - Use SEMANTIC matching: "GenAI" ≈ "Generative AI" ≈ "LLM", "React" implies JavaScript
    - Consider skill transferability between related technologies
    - Weight by importance: core required skills matter more than nice-to-haves
-   - CRITICAL: Distinguish between ACADEMIC/PROJECT skills vs PROFESSIONAL skills
-     * A student who learned Python in university is NOT equivalent to a professional Python developer
-     * Skills listed as "1y" by a student are likely academic exposure, not production experience
-     * If the candidate is a student/intern, reduce skill scores by 15-25 points for skills that require professional depth
-   - Score 80-100: Has most core skills with PROFESSIONAL depth
-   - Score 60-79: Has core skills but limited professional experience with them
-   - Score 40-59: Has related/academic skills, would need significant ramp-up
-   - Score 20-39: Has few relevant skills
-   - Score 0-19: Almost no relevant skills
+   - Count ALL forms of skill evidence: professional, freelance, consulting, real projects, open source
+   - Score 85-100: Has most required skills with strong depth and evidence
+   - Score 70-84: Has most required skills with moderate depth
+   - Score 50-69: Has some required skills, missing some key ones
+   - Score 30-49: Has few relevant skills, significant gaps
+   - Score 0-29: Almost no relevant skills
 
-2. **experience** (0-100): Does the candidate's experience level match?
-   - THIS IS CRITICAL. Experience is NOT just about skills — it's about professional maturity, ability to work independently, handle production systems, mentor others, etc.
-   - STRICT SCORING RULES:
-     * Student/Intern (0 years) applying for Internship: 90-100
-     * Student/Intern (0 years) applying for Junior role (1-2 years required): 40-60
-     * Student/Intern (0 years) applying for Mid role (2-5 years required): 15-30
-     * Student/Intern (0 years) applying for Senior role (5+ years required): 0-15
-     * Student/Intern (0 years) applying for Lead/Principal role: 0-10
-     * Junior (1-2 years) for Mid role: 50-70
-     * Junior (1-2 years) for Senior role: 15-30
-     * Mid (3-5 years) for Senior role: 50-70
-     * Perfect experience match: 85-100
-     * Overqualified by 1 level: 75-85 (slight penalty)
-     * Overqualified by 2+ levels: 60-70
+2. **experience** (0-100): Does the candidate's experience level match what THIS JOB requires?
+   - UNDER-QUALIFIED scoring (candidate has LESS experience than required):
+     * Experience matches job requirement: 80-100
+     * 1-2 years short but has relevant work: 55-75
+     * 3-4 years short: 30-50
+     * 5+ years short: 10-30
+     * Student/0 years for internship: 80-95 (great fit!)
+     * Student/0 years for mid-level: 25-40
+     * Student/0 years for senior: 10-25
+${isInternshipJob ? `   - ⚠️ OVERQUALIFIED — CRITICAL: This is an INTERNSHIP meant for students and fresh graduates.
+     * An experienced developer is OVERQUALIFIED and a BAD fit for an internship.
+     * 2 years experience → experience score: 30-40
+     * 3+ years experience → experience score: 15-25
+     * 5+ years experience → experience score: 5-15
+     * The OVERALL score for an experienced developer on an internship should be LOW (below 30).` : `   - OVERQUALIFIED scoring (candidate has MORE experience than required):
+     * For mid/senior/lead/principal jobs: MORE experience is ALWAYS a POSITIVE.
+     * A candidate with 12 years applying for a mid-level (3+ years) role → experience score: 90-100 (exceeds requirements!)
+     * A candidate with 8 years for a senior (5+ years) role → experience score: 95-100
+     * NEVER penalize a candidate for having too much experience for non-internship jobs.
+     * More experience = higher experience score, always.`}
 
 3. **domain** (0-100): Does the candidate's domain/industry experience align?
-   - Same domain = 85-100, related domain = 60-75, different but transferable = 40-55, unrelated = 15-30
-   - Academic domain experience (university projects) should score 10-20 points LOWER than professional domain experience
-   - "AI/ML" and "Data Science" are closely related
-   - "FinTech" and "Banking" are the same domain
+   - Same domain = 80-100
+   - Related domain = 55-75 (e.g., AI/ML ↔ Data Science, Web Dev ↔ SaaS)
+   - Different but transferable = 35-55
+   - Completely unrelated = 10-30
 
 4. **location** (0-100): Does the location match?
-   - Remote jobs = 100 (location doesn't matter)
+   - Remote jobs = 100
    - Same country = 100
    - Willing to relocate = 70-80
-   - Different country, not willing to relocate, onsite = 20-30
+   - Different country, onsite, not relocating = 20-30
 
 === OVERALL SCORE CALCULATION ===
-Calculate the weighted average:
-- skills: 40% weight
-- experience: 30% weight (experience matters a LOT)
-- domain: 15% weight
-- location: 15% weight
-
-MANDATORY SCORE CAPS (apply AFTER weighted average):
-- If seniority gap >= 3 levels (e.g., student → senior): overall score CANNOT exceed 35
-- If seniority gap >= 2 levels (e.g., student → mid, junior → senior): overall score CANNOT exceed 50
-- If seniority gap >= 1 level (e.g., junior → mid): overall score CANNOT exceed 65
-- If candidate has 0 years professional experience AND job requires 2+ years: overall score CANNOT exceed 55
-- If candidate has 0 years professional experience AND job requires 5+ years: overall score CANNOT exceed 35
+Calculate the weighted average using these weights:
+- skills: ${skillsWeight}% weight
+- experience: ${experienceWeight}% weight
+- domain: ${domainWeight}% weight
+- location: ${locationWeight}% weight
 
 Also provide:
-- A 2-3 sentence natural language explanation of why this candidate matches or doesn't match
-- A list of gaps (missing skills, experience shortfalls, etc.)
+- A 2-3 sentence explanation of the match quality
+- A list of REAL gaps (only list gaps that genuinely exist — do NOT fabricate gaps)
 
 Return a JSON object with this EXACT structure:
 {
-  "score": 42,
+  "score": <calculated_weighted_average>,
   "breakdown": {
-    "skills": 55,
-    "experience": 20,
-    "domain": 50,
-    "location": 100
+    "skills": <0-100>,
+    "experience": <0-100>,
+    "domain": <0-100>,
+    "location": <0-100>
   },
-  "explanation": "While the candidate shows academic knowledge of Python and JavaScript, they lack professional experience required for this mid-level role...",
+  "explanation": "<2-3 sentences>",
   "gaps": [
-    {"type": "experience", "description": "0 years professional experience vs 3 years required", "severity": "critical"},
-    {"type": "skill", "description": "No production React experience", "severity": "major"}
+    {"type": "experience|skill|domain|location", "description": "<specific gap>", "severity": "critical|major|minor"}
   ]
 }
 
 IMPORTANT RULES:
-- Do NOT inflate scores. Be REALISTIC about what a student/intern can deliver vs what a professional role demands.
-- Academic projects and coursework do NOT count as professional experience.
-- A student knowing Python from university is NOT the same as a developer who shipped Python code in production for 3 years.
-- Use semantic skill matching (GenAI ≈ LLM ≈ Generative AI), but still penalize lack of professional depth.
-- If the candidate is clearly a student/fresh graduate and the job requires years of professional experience, the overall score MUST be low (below 50).
-- Return ONLY valid JSON, no additional text or markdown formatting.`;
+- Be FAIR and ACCURATE. Base scores on what the CV ACTUALLY shows.
+- Freelance, consulting, contract work, and real project work count as experience.
+- Use semantic skill matching (GenAI ≈ LLM ≈ Generative AI, Node.js ≈ Express backend).
+- Only list gaps the candidate ACTUALLY has — do not assume or fabricate gaps.
+- The overall score MUST be the correct weighted average of the 4 breakdown scores.
+- CRITICAL: Different jobs MUST produce different scores for the same candidate. An intern CV should score high for internships but low for senior roles.
+${isInternshipJob ? '- If the candidate is overqualified for this internship, list it as a gap with type "experience".' : '- NEVER list "overqualified" as a gap for non-internship jobs. More experience is always a positive.'}
+- Gap severity: "critical" = dealbreaker missing, "major" = significant but addressable, "minor" = nice-to-have.
+- Return ONLY valid JSON, no additional text or markdown.`;
 
     try {
       const responseJson = await this.callQwen(prompt, true);
@@ -676,31 +752,38 @@ IMPORTANT RULES:
       
       let finalScore = clamp(parsed.score);
       
-      // === SERVER-SIDE HARD CAPS (safety net in case LLM ignores instructions) ===
+      // === SERVER-SIDE MODERATE CAPS (safety net — catch cases where LLM scores too high) ===
       const minYearsRequired = jobInfo.minYearsExperience || 0;
       
-      // Cap based on seniority gap
-      if (seniorityGap >= 3) {
-        finalScore = Math.min(finalScore, 35);
+      // Cap for UNDER-QUALIFIED candidates (seniority gap positive)
+      if (seniorityGap >= 4) {
+        finalScore = Math.min(finalScore, 40); // student → lead/principal
+      } else if (seniorityGap >= 3) {
+        finalScore = Math.min(finalScore, 50); // student → senior
       } else if (seniorityGap >= 2) {
-        finalScore = Math.min(finalScore, 50);
-      } else if (seniorityGap >= 1) {
-        finalScore = Math.min(finalScore, 65);
+        finalScore = Math.min(finalScore, 65); // student → mid, junior → senior
       }
       
-      // Cap based on experience years gap
+      // Cap for extreme experience gaps (under-qualified)
       if (candidateYears === 0 && minYearsRequired >= 5) {
-        finalScore = Math.min(finalScore, 35);
-      } else if (candidateYears === 0 && minYearsRequired >= 2) {
-        finalScore = Math.min(finalScore, 50);
-      } else if (candidateYears < minYearsRequired) {
-        const yearsGap = minYearsRequired - candidateYears;
-        if (yearsGap >= 5) {
-          finalScore = Math.min(finalScore, 35);
-        } else if (yearsGap >= 3) {
-          finalScore = Math.min(finalScore, 55);
+        finalScore = Math.min(finalScore, 45); // no experience for senior+ role
+      } else if (candidateYears === 0 && minYearsRequired >= 3) {
+        finalScore = Math.min(finalScore, 55); // no experience for mid role
+      }
+      
+      // Cap for OVERQUALIFIED candidates
+      if (isInternshipJob) {
+        // Internship jobs are for students/fresh grads ONLY
+        // Experienced developers should NOT appear in internship listings
+        if (candidateYears >= 5) {
+          finalScore = Math.min(finalScore, 15); // Senior/Lead dev → internship: hidden (below save threshold)
+        } else if (candidateYears >= 3) {
+          finalScore = Math.min(finalScore, 18); // Mid-level dev → internship: hidden (below save threshold)
+        } else if (candidateYears >= 2) {
+          finalScore = Math.min(finalScore, 28); // 2y experience → internship: barely visible
         }
       }
+      // For non-internship jobs: overqualification is a POSITIVE, no caps applied
       
       if (finalScore !== clamp(parsed.score)) {
         console.log(`[Qwen] Score capped from ${clamp(parsed.score)} → ${finalScore} (seniority gap=${seniorityGap}, candidate=${candidateYears}y, job requires=${minYearsRequired}y)`);
@@ -888,6 +971,529 @@ Return ONLY valid JSON, no additional text or markdown formatting.`;
       console.error('[Qwen] Failed to extract job info:', error);
       throw new Error(`Failed to extract job information: ${error.message}`);
     }
+  }
+
+  // ============================================================
+  //  PHASE 6 — AI-POWERED FEATURES
+  // ============================================================
+
+  /**
+   * 6.1 — CV Fixer / Improver
+   * Analyzes a candidate's CV and returns actionable suggestions.
+   */
+  async reviewCV(
+    cvText: string,
+    targetRole?: string
+  ): Promise<{
+    score: number;
+    sections: { section: string; issues: string[]; suggestions: string[] }[];
+    rewrittenBullets: { original: string; improved: string }[];
+    summary: string;
+  }> {
+    const roleCtx = targetRole ? `\nThe candidate is targeting the role: "${targetRole}".` : '';
+
+    const prompt = `You are a senior career coach and CV expert. Analyze the following CV and provide detailed, actionable feedback.${roleCtx}
+
+=== CV TEXT ===
+${cvText.substring(0, 10000)}
+=== END CV ===
+
+Evaluate the CV for:
+1. Weak action verbs ("worked on" → "engineered", "did" → "implemented")
+2. Missing quantifiable achievements ("improved performance" → "improved by 40%")
+3. Formatting issues (inconsistent dates, missing sections)
+4. Missing keywords for the target role(s)
+5. Grammar and clarity
+6. Overall structure and readability
+
+Return a JSON object:
+{
+  "score": <0-100 overall CV quality>,
+  "sections": [
+    {
+      "section": "Content Quality",
+      "issues": ["Uses weak action verbs in 3 bullet points"],
+      "suggestions": ["Replace 'worked on' with 'engineered' or 'developed'"]
+    }
+  ],
+  "rewrittenBullets": [
+    {
+      "original": "Worked on the backend system",
+      "improved": "Engineered a scalable backend system serving 10K+ daily requests"
+    }
+  ],
+  "summary": "2-3 sentence overall assessment"
+}
+
+Provide 3-6 sections of feedback and 3-8 rewritten bullet points from the CV.
+Return ONLY valid JSON, no additional text.`;
+
+    const response = await this.callQwen(prompt, true);
+    return JSON.parse(response);
+  }
+
+  /**
+   * 6.2 — CV Tailor for specific job
+   * Suggests changes to emphasize skills/experience relevant to a particular job.
+   */
+  async tailorCV(
+    cvText: string,
+    jobTitle: string,
+    jobDescription: string,
+    jobSkills: string[]
+  ): Promise<{
+    tailoredSections: { section: string; changes: string[] }[];
+    keyChanges: string[];
+    matchImprovement: { before: number; after: number };
+  }> {
+    const prompt = `You are an expert career advisor. A candidate wants to tailor their CV for a specific job.
+
+=== CANDIDATE'S CV ===
+${cvText.substring(0, 8000)}
+
+=== TARGET JOB ===
+Title: ${jobTitle}
+Description: ${jobDescription.substring(0, 3000)}
+Key Skills: ${jobSkills.join(', ')}
+
+Compare the CV with the job requirements and suggest specific changes:
+1. Reorder skills to highlight relevant ones first
+2. Suggest rewriting bullet points to match job keywords
+3. Identify which experiences to emphasize or de-emphasize
+4. Add missing keywords from the job description
+
+Return JSON:
+{
+  "tailoredSections": [
+    {
+      "section": "Skills Section",
+      "changes": ["Move Python and ML skills to the top", "Add 'data pipeline' keyword"]
+    }
+  ],
+  "keyChanges": [
+    "Highlight ML experience in the summary",
+    "Add quantified metrics to data projects"
+  ],
+  "matchImprovement": { "before": 62, "after": 81 }
+}
+
+Return ONLY valid JSON.`;
+
+    const response = await this.callQwen(prompt, true);
+    return JSON.parse(response);
+  }
+
+  /**
+   * 6.3 — Cover Letter Writer
+   */
+  async generateCoverLetter(
+    cvText: string,
+    jobTitle: string,
+    jobDescription: string,
+    companyName: string,
+    tone: 'formal' | 'conversational' | 'enthusiastic' = 'formal'
+  ): Promise<{ coverLetter: string; alternateVersions: string[] }> {
+    const prompt = `You are an expert cover letter writer. Generate a tailored cover letter.
+
+=== CANDIDATE'S CV ===
+${cvText.substring(0, 6000)}
+
+=== JOB DETAILS ===
+Title: ${jobTitle}
+Company: ${companyName}
+Description: ${jobDescription.substring(0, 3000)}
+
+Tone: ${tone}
+
+Write a cover letter (300-500 words) that:
+- Opens with why the candidate is interested in this specific company/role
+- Maps their experience to the job requirements (2-3 key matches)
+- Highlights 2-3 most relevant achievements with specifics
+- Closes with enthusiasm and a call to action
+
+Also generate 1 alternate shorter version (150-250 words).
+
+Return JSON:
+{
+  "coverLetter": "<full cover letter text>",
+  "alternateVersions": ["<shorter version>"]
+}
+
+Return ONLY valid JSON.`;
+
+    const response = await this.callQwen(prompt, true);
+    return JSON.parse(response);
+  }
+
+  /**
+   * 6.4 — Job Posting Fixer / Optimizer
+   */
+  async reviewJobPosting(
+    title: string,
+    description: string,
+    mustHaveSkills: string[],
+    niceToHaveSkills: string[]
+  ): Promise<{
+    score: number;
+    issues: { issue: string; severity: 'high' | 'medium' | 'low'; fix: string }[];
+    suggestions: string[];
+    rewrittenDescription: string;
+    improvedTitle: string;
+    inclusivityReport: string;
+  }> {
+    const prompt = `You are an expert talent acquisition consultant. Review this job posting for clarity, inclusivity, SEO, and candidate attraction.
+
+Title: ${title}
+Description: ${description.substring(0, 5000)}
+Must-Have Skills: ${mustHaveSkills.join(', ')}
+Nice-To-Have Skills: ${niceToHaveSkills.join(', ')}
+
+Analyze for:
+1. Clarity: vague requirements → specific ones
+2. Inclusivity: biased language ("rockstar", "ninja", gendered terms)
+3. SEO: missing keywords candidates search for
+4. Length: too long/short, optimal structure
+5. Realistic requirements: e.g., "10 years React" when React is 11 years old
+6. Skill overload: too many must-haves discouraging good candidates
+7. Missing info: no salary range, no remote/onsite clarity
+8. Tone: too corporate/cold vs welcoming
+
+Return JSON:
+{
+  "score": <0-100>,
+  "issues": [
+    { "issue": "Uses gendered language 'he/him'", "severity": "high", "fix": "Use 'they/them' or 'you'" }
+  ],
+  "suggestions": ["Add a salary range to attract 30% more applicants"],
+  "rewrittenDescription": "<improved full description>",
+  "improvedTitle": "<improved title>",
+  "inclusivityReport": "2-3 sentence inclusivity assessment"
+}
+
+Return ONLY valid JSON.`;
+
+    const response = await this.callQwen(prompt, true);
+    return JSON.parse(response);
+  }
+
+  /**
+   * 6.5 — Job Description Generator
+   */
+  async generateJobDescription(
+    title: string,
+    skills?: string[],
+    seniorityLevel?: string,
+    locationType?: string,
+    industry?: string,
+    companyDescription?: string
+  ): Promise<{
+    description: string;
+    mustHaveSkills: string[];
+    niceToHaveSkills: string[];
+    suggestedSeniority: string;
+    suggestedMinYears: number;
+  }> {
+    const prompt = `You are an expert HR professional. Generate a complete, compelling job description from the given inputs.
+
+Title: ${title}
+${skills?.length ? `Key Skills: ${skills.join(', ')}` : ''}
+${seniorityLevel ? `Seniority Level: ${seniorityLevel}` : ''}
+${locationType ? `Location Type: ${locationType}` : ''}
+${industry ? `Industry: ${industry}` : ''}
+${companyDescription ? `About the Company: ${companyDescription.substring(0, 500)}` : ''}
+
+Generate a professional job posting including:
+- Role summary (2-3 sentences)
+- Key responsibilities (5-8 bullet points)
+- Requirements (must-have skills, experience)
+- Nice-to-have qualifications
+- What we offer / benefits
+- About the company section (generic if company info not provided)
+
+Return JSON:
+{
+  "description": "<complete job description in markdown format>",
+  "mustHaveSkills": ["Python", "Machine Learning"],
+  "niceToHaveSkills": ["Docker", "Kubernetes"],
+  "suggestedSeniority": "mid",
+  "suggestedMinYears": 3
+}
+
+Return ONLY valid JSON.`;
+
+    const response = await this.callQwen(prompt, true);
+    return JSON.parse(response);
+  }
+
+  /**
+   * 6.6 — Interview Question Generator
+   */
+  async generateInterviewQuestions(
+    jobTitle: string,
+    jobDescription: string,
+    jobSkills: string[],
+    candidateCvText?: string,
+    questionTypes: string[] = ['technical', 'behavioral', 'situational'],
+    difficulty: string = 'mixed'
+  ): Promise<{
+    questions: {
+      question: string;
+      type: string;
+      difficulty: string;
+      expectedAnswer: string;
+      scoringCriteria: string;
+      relatedSkill: string;
+    }[];
+  }> {
+    const candidateContext = candidateCvText
+      ? `\n=== CANDIDATE'S CV (for tailored questions) ===\n${candidateCvText.substring(0, 4000)}`
+      : '';
+
+    const prompt = `You are a senior technical interviewer. Generate tailored interview questions.
+
+=== JOB ===
+Title: ${jobTitle}
+Description: ${jobDescription.substring(0, 3000)}
+Key Skills: ${jobSkills.join(', ')}
+${candidateContext}
+
+Question Types to generate: ${questionTypes.join(', ')}
+Difficulty: ${difficulty}
+
+Generate 10-12 high-quality interview questions. For each:
+- technical: based on required skills
+- behavioral: STAR-format questions relevant to the role
+- situational: role-specific scenarios
+${candidateCvText ? '- candidate-specific: based on their CV gaps or interesting projects' : ''}
+Include a scoring rubric for each.
+
+Return JSON:
+{
+  "questions": [
+    {
+      "question": "Explain how you would design a real-time data pipeline...",
+      "type": "technical",
+      "difficulty": "senior",
+      "expectedAnswer": "A good answer should cover...",
+      "scoringCriteria": "Look for: architecture patterns, scalability, trade-offs",
+      "relatedSkill": "Data Engineering"
+    }
+  ]
+}
+
+Return ONLY valid JSON.`;
+
+    const response = await this.callQwen(prompt, true);
+    return JSON.parse(response);
+  }
+
+  /**
+   * 6.7 — Candidate Summary / Pitch Generator
+   */
+  async generateCandidateSummary(
+    candidateName: string,
+    cvText: string,
+    jobTitle: string,
+    jobDescription: string
+  ): Promise<{
+    summary: string;
+    strengths: string[];
+    concerns: string[];
+    fitReasoning: string;
+  }> {
+    const prompt = `You are a senior recruiter presenting a candidate to a hiring manager. Generate an executive summary.
+
+=== CANDIDATE ===
+Name: ${candidateName}
+CV:
+${cvText.substring(0, 6000)}
+
+=== JOB ===
+Title: ${jobTitle}
+Description: ${jobDescription.substring(0, 3000)}
+
+Generate:
+1. A 3-4 sentence executive summary of the candidate
+2. Top 3 key strengths for THIS role
+3. Top 2 potential concerns (be honest but fair)
+4. Why this candidate specifically fits this role (2-3 sentences)
+
+Return JSON:
+{
+  "summary": "Jane is a seasoned backend engineer with 7 years of experience...",
+  "strengths": ["Deep Python expertise with production ML systems", "Led team of 5"],
+  "concerns": ["Limited frontend experience", "No direct industry exposure"],
+  "fitReasoning": "Jane's strong backend and ML skills align directly with..."
+}
+
+Return ONLY valid JSON.`;
+
+    const response = await this.callQwen(prompt, true);
+    return JSON.parse(response);
+  }
+
+  /**
+   * 6.8 — Skill Gap Analysis & Learning Recommendations
+   */
+  async analyzeSkillGaps(
+    candidateSkills: any[],
+    candidateExperience: number,
+    targetRole?: string,
+    targetJobDescriptions?: string[]
+  ): Promise<{
+    gaps: {
+      skill: string;
+      importance: 'critical' | 'high' | 'medium' | 'low';
+      currentLevel: string;
+      requiredLevel: string;
+      learningTime: string;
+      impactOnScore: number;
+    }[];
+    recommendations: string[];
+    summary: string;
+  }> {
+    const currentSkills = candidateSkills
+      .map((s: any) => `${s.name || s} (${s.level || 'unknown'})`)
+      .join(', ');
+
+    const jobContext = targetJobDescriptions?.length
+      ? `\nTarget Job Descriptions:\n${targetJobDescriptions.map((d, i) => `Job ${i + 1}: ${d.substring(0, 1500)}`).join('\n')}`
+      : '';
+
+    const prompt = `You are a career development advisor. Analyze skill gaps and provide learning recommendations.
+
+=== CANDIDATE ===
+Current Skills: ${currentSkills}
+Years of Experience: ${candidateExperience}
+${targetRole ? `Target Role: ${targetRole}` : ''}
+${jobContext}
+
+Analyze:
+1. Current skills vs. market demand for the target role(s)
+2. Which missing skills would have the highest impact
+3. Priority order (learn X before Y because…)
+4. Time estimates
+
+Return JSON:
+{
+  "gaps": [
+    {
+      "skill": "Docker",
+      "importance": "high",
+      "currentLevel": "none",
+      "requiredLevel": "intermediate",
+      "learningTime": "2-3 weeks",
+      "impactOnScore": 12
+    }
+  ],
+  "recommendations": [
+    "Start with Docker basics — it's the highest-impact skill to learn next",
+    "Consider an online course on Kubernetes after Docker"
+  ],
+  "summary": "You have a strong foundation in X but are missing key DevOps skills..."
+}
+
+Provide 5-10 skill gaps sorted by impact.
+Return ONLY valid JSON.`;
+
+    const response = await this.callQwen(prompt, true);
+    return JSON.parse(response);
+  }
+
+  /**
+   * 6.9 — Salary Estimator
+   */
+  async estimateSalary(
+    role: string,
+    skills: string[],
+    yearsExperience: number,
+    country: string,
+    city?: string
+  ): Promise<{
+    min: number;
+    median: number;
+    max: number;
+    currency: string;
+    factors: { factor: string; impact: string }[];
+    marketComparison: string;
+  }> {
+    const prompt = `You are a compensation analyst. Estimate the salary range for this role.
+
+Role: ${role}
+Skills: ${skills.join(', ')}
+Years of Experience: ${yearsExperience}
+Country: ${country}
+${city ? `City: ${city}` : ''}
+
+Based on general market knowledge, estimate:
+- Salary range (min, median, max) in the local currency
+- How each factor affects the range
+- Comparison to market average
+
+Return JSON:
+{
+  "min": 60000,
+  "median": 80000,
+  "max": 110000,
+  "currency": "USD",
+  "factors": [
+    { "factor": "5 years Python experience", "impact": "+15% above entry level" },
+    { "factor": "Remote position", "impact": "Salary may vary by location" }
+  ],
+  "marketComparison": "This range is slightly above the market median for this role..."
+}
+
+Return ONLY valid JSON.`;
+
+    const response = await this.callQwen(prompt, true);
+    return JSON.parse(response);
+  }
+
+  /**
+   * 6.10 — AI Chat Assistant
+   */
+  async chatAssistant(
+    message: string,
+    conversationHistory: { role: 'user' | 'assistant'; content: string }[],
+    context?: {
+      userRole: string;
+      userName: string;
+      currentPage?: string;
+    }
+  ): Promise<{ response: string; suggestedActions?: string[] }> {
+    const ctxStr = context
+      ? `\nUser context: ${context.userName} is a ${context.userRole}. ${context.currentPage ? `Currently on: ${context.currentPage}` : ''}`
+      : '';
+
+    const historyStr = conversationHistory
+      .slice(-10) // last 10 messages
+      .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+      .join('\n');
+
+    const prompt = `You are the CV Matcher AI Assistant — a helpful, concise assistant built into the CV Matcher hiring platform.${ctxStr}
+
+Previous conversation:
+${historyStr || '(none)'}
+
+User: ${message}
+
+Instructions:
+- Be helpful, friendly, and concise (2-5 sentences per response unless more detail is needed)
+- For candidates: help with profile improvement, job search, CV tips, interview prep
+- For companies: help with job posting, candidate evaluation, hiring advice
+- You can suggest platform actions the user might take
+- If asked something outside the platform scope, politely redirect
+
+Return JSON:
+{
+  "response": "Your helpful response here",
+  "suggestedActions": ["Improve your CV", "Browse matching jobs"]
+}
+
+Return ONLY valid JSON.`;
+
+    const response = await this.callQwen(prompt, true);
+    return JSON.parse(response);
   }
 
   getModelVersion(): string {

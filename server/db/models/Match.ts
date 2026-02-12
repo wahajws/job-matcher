@@ -13,6 +13,7 @@ export interface MatchAttributes {
   explanation: string;
   gaps: any; // JSON
   status: MatchStatus;
+  application_id?: string;
   calculated_at?: Date;
 }
 
@@ -25,6 +26,7 @@ export class Match extends BaseModel<MatchAttributes> implements MatchAttributes
   declare explanation: string;
   declare gaps: any;
   declare status: MatchStatus;
+  declare application_id?: string;
   declare calculated_at: Date;
 }
 
@@ -75,6 +77,14 @@ Match.init(
       type: DataTypes.ENUM('pending', 'shortlisted', 'rejected'),
       allowNull: false,
       defaultValue: 'pending',
+    },
+    application_id: {
+      type: DataTypes.STRING(36),
+      allowNull: true,
+      references: {
+        model: 'applications',
+        key: 'id',
+      },
     },
     calculated_at: {
       type: DataTypes.DATE,

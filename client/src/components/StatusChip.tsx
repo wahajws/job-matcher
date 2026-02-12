@@ -18,6 +18,12 @@ const statusLabels: Record<string, string> = {
   pending: 'Pending',
   shortlisted: 'Shortlisted',
   rejected: 'Rejected',
+  applied: 'Applied',
+  screening: 'Screening',
+  interview: 'Interview',
+  offer: 'Offer',
+  hired: 'Hired',
+  withdrawn: 'Withdrawn',
 };
 
 export function StatusChip({ status, className }: StatusChipProps) {

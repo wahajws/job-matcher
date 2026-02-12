@@ -18,13 +18,25 @@ declare module "http" {
 // CORS middleware - must come before body parsers
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  // Allow requests from same origin (Vite dev server) or configured origins
-  if (!origin || origin.includes('localhost') || origin.includes('127.0.0.1')) {
+  // Allow from configured origin, or same-origin dev/localhost
+  const allowedOrigins = (process.env.CORS_ORIGINS || '').split(',').filter(Boolean);
+  const isAllowed =
+    !origin ||
+    origin.includes('localhost') ||
+    origin.includes('127.0.0.1') ||
+    allowedOrigins.includes(origin);
+
+  if (isAllowed) {
     res.setHeader('Access-Control-Allow-Origin', origin || '*');
   }
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
+  // Security headers
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
