@@ -32,8 +32,8 @@ async function seed() {
   try {
     console.log('Starting database seeding...');
 
-    // Sync database
-    await sequelize.sync({ force: false });
+    // Authenticate database connection (skip sync since tables already exist)
+    await sequelize.authenticate();
 
     // Seed Users
     if (SEED_USERS > 0) {
