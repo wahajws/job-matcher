@@ -1,18 +1,24 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useRoute, Link } from 'wouter';
+import { useRoute, Link, useLocation } from 'wouter';
 import {
   getCompanyJob,
   getApplicationsForJob,
   updateApplicationStatus,
   updateCompanyJob,
+  getMatchesForJob,
+  createConversation,
 } from '@/api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Slider } from '@/components/ui/slider';
+import { Textarea } from '@/components/ui/textarea';
 import { StatusChip } from '@/components/StatusChip';
 import { ScoreBadge } from '@/components/ScoreBadge';
+import { BreakdownBar } from '@/components/BreakdownBar';
+import { JobMatrixView } from '@/components/MatrixView';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate, getCountryFromCode } from '@/utils/helpers';
 import {
@@ -47,6 +53,10 @@ import {
   User,
   ChevronRight,
   Columns3,
+  MessageSquare,
+  Send,
+  Loader2,
+  Target,
 } from 'lucide-react';
 import type { Application, ApplicationStatus } from '@/types';
 
@@ -80,12 +90,21 @@ export default function CompanyJobDetail() {
   const [, params] = useRoute('/company/jobs/:id');
   const jobId = params?.id || '';
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
 
   const [appStatusFilter, setAppStatusFilter] = useState('all');
   const [appSort, setAppSort] = useState('date');
   const [statusAction, setStatusAction] = useState<{ app: Application; newStatus: ApplicationStatus } | null>(null);
   const [selectedApp, setSelectedApp] = useState<Application | null>(null);
+  const [minScore, setMinScore] = useState(0);
+  const [selectedMatch, setSelectedMatch] = useState<any>(null);
+  const [messageDialog, setMessageDialog] = useState<{
+    open: boolean;
+    candidateUserId: string;
+    candidateName: string;
+  }>({ open: false, candidateUserId: '', candidateName: '' });
+  const [messageText, setMessageText] = useState('');
 
   const { data: job, isLoading: jobLoading } = useQuery({
     queryKey: ['company-job', jobId],
@@ -101,6 +120,35 @@ export default function CompanyJobDetail() {
         sortBy: appSort,
       }),
     enabled: !!jobId,
+  });
+
+  // Fetch matched candidates for this job
+  const { data: matchedCandidates, isLoading: matchesLoading } = useQuery({
+    queryKey: ['matches-for-job', jobId],
+    queryFn: () => getMatchesForJob(jobId),
+    enabled: !!jobId,
+  });
+
+  const filteredMatches = (matchedCandidates || []).filter((m: any) => m.score >= minScore);
+
+  // Message mutation
+  const messageMutation = useMutation({
+    mutationFn: () =>
+      createConversation({
+        candidateUserId: messageDialog.candidateUserId,
+        jobId,
+        message: messageText.trim(),
+      }),
+    onSuccess: () => {
+      toast({ title: 'Message sent!', description: `Conversation started with ${messageDialog.candidateName}` });
+      setMessageDialog({ open: false, candidateUserId: '', candidateName: '' });
+      setMessageText('');
+      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      setLocation('/messages');
+    },
+    onError: (err: any) => {
+      toast({ title: 'Failed to send', description: err.message, variant: 'destructive' });
+    },
   });
 
   const updateStatusMutation = useMutation({
@@ -237,6 +285,10 @@ export default function CompanyJobDetail() {
           <TabsTrigger value="applications">
             Applications ({job.totalApplications || 0})
           </TabsTrigger>
+          <TabsTrigger value="matches">
+            Matched Candidates ({filteredMatches.length})
+          </TabsTrigger>
+          <TabsTrigger value="matrix">Job Matrix</TabsTrigger>
           <TabsTrigger value="details">Job Details</TabsTrigger>
         </TabsList>
 
@@ -387,6 +439,197 @@ export default function CompanyJobDetail() {
                 );
               })}
             </div>
+          )}
+        </TabsContent>
+
+        {/* ==================== MATCHED CANDIDATES TAB ==================== */}
+        <TabsContent value="matches" className="space-y-4 pt-2">
+          {/* Filters */}
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Min Score:</span>
+              <div className="w-24">
+                <Slider
+                  value={[minScore]}
+                  onValueChange={([v]) => setMinScore(v)}
+                  max={100}
+                  step={10}
+                />
+              </div>
+              <span className="text-xs font-medium w-6">{minScore}</span>
+            </div>
+            <span className="text-sm text-muted-foreground">
+              {filteredMatches.length} candidate{filteredMatches.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+
+          {matchesLoading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => <Skeleton key={i} className="h-24" />)}
+            </div>
+          ) : filteredMatches.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12">
+                <Users className="w-10 h-10 text-muted-foreground mb-3" />
+                <p className="font-medium">No matched candidates yet</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Candidates will appear here as they upload CVs and get matched to this job.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-3">
+              {filteredMatches.map((match: any) => {
+                const c = match.candidate;
+                if (!c) return null;
+                return (
+                  <Card key={match.id} className="hover:bg-muted/30 transition-colors">
+                    <CardContent className="p-4">
+                      <div className="flex items-start gap-4">
+                        {/* Avatar */}
+                        <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center shrink-0 overflow-hidden">
+                          {c.photoUrl ? (
+                            <img src={c.photoUrl} alt="" className="w-10 h-10 rounded-full object-cover" />
+                          ) : (
+                            <User className="w-5 h-5 text-muted-foreground" />
+                          )}
+                        </div>
+
+                        {/* Info */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <h3
+                                className="font-medium cursor-pointer hover:text-primary"
+                                onClick={() => setSelectedMatch(match)}
+                              >
+                                {c.name}
+                              </h3>
+                              <p className="text-sm text-muted-foreground truncate">
+                                {c.headline || c.roles?.[0] || c.email}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <ScoreBadge score={match.score} size="sm" />
+                              <StatusChip status={match.status} />
+                            </div>
+                          </div>
+
+                          {/* Quick info */}
+                          <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                            {c.country && (
+                              <span className="flex items-center gap-0.5">
+                                <MapPin className="w-3 h-3" />
+                                {getCountryFromCode(c.countryCode || c.country)}
+                              </span>
+                            )}
+                            {c.totalYearsExperience > 0 && (
+                              <span className="flex items-center gap-0.5">
+                                <Briefcase className="w-3 h-3" />
+                                {c.totalYearsExperience}y exp
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Skills preview */}
+                          {c.skills && c.skills.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              {c.skills.slice(0, 6).map((s: any, i: number) => (
+                                <Badge key={i} variant="secondary" className="text-xs">
+                                  {s.name}
+                                </Badge>
+                              ))}
+                              {c.skills.length > 6 && (
+                                <Badge variant="outline" className="text-xs">
+                                  +{c.skills.length - 6} more
+                                </Badge>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Actions */}
+                          <div className="flex items-center gap-2 mt-3">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="gap-1"
+                              onClick={() => setSelectedMatch(match)}
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              Details
+                            </Button>
+                            <Link href={`/company/candidates/${c.id}?job=${jobId}`}>
+                              <Button variant="outline" size="sm" className="gap-1">
+                                <User className="w-3.5 h-3.5" />
+                                Full Profile
+                              </Button>
+                            </Link>
+                            {c.userId && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="gap-1"
+                                onClick={() =>
+                                  setMessageDialog({
+                                    open: true,
+                                    candidateUserId: c.userId,
+                                    candidateName: c.name,
+                                  })
+                                }
+                              >
+                                <MessageSquare className="w-3.5 h-3.5" />
+                                Message
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ==================== JOB MATRIX TAB ==================== */}
+        <TabsContent value="matrix" className="space-y-4 pt-2">
+          {job.matrix ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Target className="w-5 h-5" />
+                  Job Matrix
+                </CardTitle>
+                <CardDescription>
+                  AI-generated matrix used to evaluate and rank candidates for this position
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <JobMatrixView matrix={job.matrix} />
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12">
+                <Target className="w-10 h-10 text-muted-foreground mb-3" />
+                <p className="font-medium">No matrix generated yet</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {job.status === 'draft'
+                    ? 'Publish this job to automatically generate a job matrix.'
+                    : 'The matrix will be generated automatically. Please check back shortly.'}
+                </p>
+                {job.status === 'draft' && (
+                  <Button
+                    className="mt-4 gap-2"
+                    onClick={() => toggleJobStatus.mutate('published')}
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    Publish Job
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
           )}
         </TabsContent>
 
@@ -594,6 +837,163 @@ export default function CompanyJobDetail() {
               disabled={updateStatusMutation.isPending}
             >
               {updateStatusMutation.isPending ? 'Updating...' : 'Confirm'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Match Detail Dialog */}
+      <Dialog open={!!selectedMatch} onOpenChange={() => setSelectedMatch(null)}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{selectedMatch?.candidate?.name}</DialogTitle>
+            <DialogDescription>
+              {selectedMatch?.candidate?.headline || selectedMatch?.candidate?.email}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedMatch && (
+            <div className="space-y-4 py-2">
+              <div className="flex items-center gap-3">
+                <ScoreBadge score={selectedMatch.score} size="md" showLabel />
+                <StatusChip status={selectedMatch.status} />
+              </div>
+
+              {/* Match Breakdown */}
+              {selectedMatch.breakdown && (
+                <div>
+                  <h4 className="text-sm font-medium mb-2">Score Breakdown</h4>
+                  <BreakdownBar breakdown={selectedMatch.breakdown} />
+                </div>
+              )}
+
+              {/* Explanation */}
+              {selectedMatch.explanation && (
+                <div>
+                  <h4 className="text-sm font-medium mb-1">AI Match Analysis</h4>
+                  <p className="text-sm text-muted-foreground">{selectedMatch.explanation}</p>
+                </div>
+              )}
+
+              {/* Gaps */}
+              {selectedMatch.gaps && selectedMatch.gaps.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium mb-1">Gaps</h4>
+                  <div className="space-y-1.5">
+                    {selectedMatch.gaps.map((g: any, i: number) => (
+                      <div key={i} className="flex items-start gap-2 text-sm p-2 bg-amber-50 dark:bg-amber-900/20 rounded">
+                        <Badge variant="outline" className="text-xs capitalize shrink-0">{g.severity}</Badge>
+                        <span>{g.description}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Skills */}
+              {selectedMatch.candidate?.skills && selectedMatch.candidate.skills.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium mb-1.5">Skills</h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selectedMatch.candidate.skills.map((s: any, i: number) => (
+                      <Badge
+                        key={i}
+                        variant={s.level === 'advanced' ? 'default' : 'secondary'}
+                        className="text-xs"
+                      >
+                        {s.name}
+                        {s.yearsOfExperience > 0 && <span className="ml-1 opacity-70">{s.yearsOfExperience}y</span>}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Domains */}
+              {selectedMatch.candidate?.domains && selectedMatch.candidate.domains.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium mb-1.5">Domains</h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selectedMatch.candidate.domains.map((d: string, i: number) => (
+                      <Badge key={i} variant="outline" className="text-xs">{d}</Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            {selectedMatch?.candidate?.id && (
+              <Link href={`/company/candidates/${selectedMatch.candidate.id}?job=${jobId}`}>
+                <Button variant="outline" className="gap-1">
+                  <User className="w-3.5 h-3.5" />
+                  Full Profile
+                </Button>
+              </Link>
+            )}
+            {selectedMatch?.candidate?.userId && (
+              <Button
+                className="gap-1"
+                onClick={() => {
+                  setSelectedMatch(null);
+                  setMessageDialog({
+                    open: true,
+                    candidateUserId: selectedMatch.candidate.userId,
+                    candidateName: selectedMatch.candidate.name,
+                  });
+                }}
+              >
+                <MessageSquare className="w-3.5 h-3.5" />
+                Message
+              </Button>
+            )}
+            <Button variant="outline" onClick={() => setSelectedMatch(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Message Dialog */}
+      <Dialog
+        open={messageDialog.open}
+        onOpenChange={(open) => {
+          setMessageDialog((prev) => ({ ...prev, open }));
+          if (!open) setMessageText('');
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Message {messageDialog.candidateName}</DialogTitle>
+            <DialogDescription>
+              Regarding: {job.title}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Textarea
+              value={messageText}
+              onChange={(e) => setMessageText(e.target.value)}
+              placeholder="Hi! We reviewed your profile and think you'd be a great fit…"
+              rows={5}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setMessageDialog((prev) => ({ ...prev, open: false }))}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => messageMutation.mutate()}
+              disabled={messageMutation.isPending || !messageText.trim()}
+              className="gap-2"
+            >
+              {messageMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Send className="w-4 h-4" />
+              )}
+              Send Message
             </Button>
           </DialogFooter>
         </DialogContent>
