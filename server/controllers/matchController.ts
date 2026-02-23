@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
-import { Match, Candidate, Job, CandidateMatrix, JobMatrix } from '../db/models/index.js';
+import { Op } from 'sequelize';
+import { Match, Candidate, Job, CandidateMatrix, JobMatrix, CompanyProfile, Application, User } from '../db/models/index.js';
 import { BaseController } from '../db/base/BaseController.js';
+import type { AuthRequest } from '../middleware/auth.js';
 import { matchingService } from '../services/matching.js';
 import { qwenService } from '../services/qwen.js';
 import { randomUUID } from 'crypto';
@@ -14,27 +16,159 @@ export class MatchController extends BaseController {
 
       const matches = await Match.findAll({
         where: { job_id: jobId },
-        include: [{ model: Candidate, as: 'candidate' }],
+        include: [
+          {
+            model: Candidate,
+            as: 'candidate',
+            attributes: ['id', 'user_id', 'name', 'email', 'phone', 'country', 'country_code', 'headline', 'photo_url', 'bio', 'linkedin_url', 'github_url', 'portfolio_url'],
+            include: [
+              {
+                model: CandidateMatrix,
+                as: 'matrices',
+                attributes: ['skills', 'roles', 'total_years_experience', 'domains', 'education', 'languages'],
+                limit: 1,
+                order: [['created_at', 'DESC']],
+                required: false,
+              },
+            ],
+          },
+        ],
         order: [['score', 'DESC']],
       });
 
       // Filter out low-quality matches (score < 25)
       const filteredMatches = matches.filter((m: any) => {
         const score = typeof m.score === 'number' ? m.score : 0;
-        return score >= 25; // Show matches with at least some relevance
+        return score >= 25;
       });
 
-      return filteredMatches.map((m: any) => ({
-        id: m.id,
-        candidateId: m.candidate_id,
-        jobId: m.job_id,
-        score: m.score,
-        breakdown: m.breakdown,
-        explanation: m.explanation,
-        gaps: m.gaps,
-        status: m.status,
-        calculatedAt: m.calculated_at,
-      }));
+      return filteredMatches.map((m: any) => {
+        const c = m.candidate;
+        const matrix = c?.matrices?.[0];
+        return {
+          id: m.id,
+          candidateId: m.candidate_id,
+          jobId: m.job_id,
+          score: m.score,
+          breakdown: m.breakdown,
+          explanation: m.explanation,
+          gaps: m.gaps,
+          status: m.status,
+          calculatedAt: m.calculated_at,
+          candidate: c ? {
+            id: c.id,
+            userId: c.user_id,
+            name: c.name,
+            email: c.email,
+            headline: c.headline,
+            photoUrl: c.photo_url,
+            country: c.country,
+            countryCode: c.country_code,
+            bio: c.bio,
+            linkedinUrl: c.linkedin_url,
+            githubUrl: c.github_url,
+            portfolioUrl: c.portfolio_url,
+            skills: matrix?.skills || [],
+            roles: matrix?.roles || [],
+            totalYearsExperience: matrix?.total_years_experience || 0,
+            domains: matrix?.domains || [],
+            education: matrix?.education || [],
+          } : null,
+        };
+      });
+    });
+  }
+
+  // ==================== GET all matched candidates across all company jobs ====================
+  async getCompanyMatches(req: AuthRequest, res: Response) {
+    await this.handleRequest(req, res, async () => {
+      if (!req.user) throw Object.assign(new Error('Auth required'), { status: 401 });
+
+      const company = await CompanyProfile.findOne({ where: { user_id: req.user.id } });
+      if (!company) throw Object.assign(new Error('Company profile not found'), { status: 404 });
+
+      // Get all published jobs for this company
+      const jobs = await Job.findAll({
+        where: { company_id: company.id, status: 'published' },
+        attributes: ['id', 'title', 'department', 'city', 'country', 'seniority_level'],
+      });
+
+      if (jobs.length === 0) return [];
+
+      const jobIds = jobs.map((j: any) => j.id);
+      const jobMap = new Map(jobs.map((j: any) => [j.id, j]));
+
+      // Get all matches for those jobs
+      const matches = await Match.findAll({
+        where: { job_id: { [Op.in]: jobIds }, score: { [Op.gte]: 25 } },
+        include: [
+          {
+            model: Candidate,
+            as: 'candidate',
+            attributes: ['id', 'user_id', 'name', 'email', 'phone', 'country', 'country_code', 'headline', 'photo_url'],
+            include: [
+              {
+                model: CandidateMatrix,
+                as: 'matrices',
+                attributes: ['skills', 'roles', 'total_years_experience', 'domains'],
+                limit: 1,
+                order: [['created_at', 'DESC']],
+                required: false,
+              },
+            ],
+          },
+        ],
+        order: [['score', 'DESC']],
+      });
+
+      // Check which candidates have already applied
+      const candidateIds = [...new Set(matches.map((m: any) => m.candidate_id))];
+      const applications = await Application.findAll({
+        where: { candidate_id: { [Op.in]: candidateIds }, job_id: { [Op.in]: jobIds } },
+        attributes: ['candidate_id', 'job_id', 'status'],
+      });
+      const appMap = new Map<string, string>();
+      for (const a of applications) {
+        appMap.set(`${a.candidate_id}:${a.job_id}`, a.status);
+      }
+
+      return matches.map((m: any) => {
+        const c = m.candidate;
+        const matrix = c?.matrices?.[0];
+        const job = jobMap.get(m.job_id);
+        return {
+          id: m.id,
+          candidateId: m.candidate_id,
+          jobId: m.job_id,
+          score: m.score,
+          breakdown: m.breakdown,
+          explanation: m.explanation,
+          status: m.status,
+          calculatedAt: m.calculated_at,
+          applicationStatus: appMap.get(`${m.candidate_id}:${m.job_id}`) || null,
+          candidate: c ? {
+            id: c.id,
+            userId: c.user_id,
+            name: c.name,
+            email: c.email,
+            headline: c.headline,
+            photoUrl: c.photo_url,
+            country: c.country,
+            countryCode: c.country_code,
+            skills: matrix?.skills?.slice(0, 8) || [],
+            roles: matrix?.roles || [],
+            totalYearsExperience: matrix?.total_years_experience || 0,
+            domains: matrix?.domains || [],
+          } : null,
+          job: job ? {
+            id: job.id,
+            title: job.title,
+            department: job.department,
+            city: job.city,
+            country: job.country,
+          } : null,
+        };
+      });
     });
   }
 

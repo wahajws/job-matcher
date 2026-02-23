@@ -80,6 +80,7 @@ const companyMenuItems = [
   { title: 'Dashboard', url: '/company/dashboard', icon: LayoutDashboard },
   { title: 'Company Profile', url: '/company/profile', icon: Building2 },
   { title: 'Jobs', url: '/company/jobs', icon: Briefcase },
+  { title: 'Candidates', url: '/company/candidates', icon: Users },
   { title: 'AI Job Generator', url: '/company/job-generator', icon: Wand2 },
   { title: 'Interview Prep', url: '/company/interview-prep', icon: MessageCircleQuestion },
   { title: 'Analytics', url: '/company/analytics', icon: BarChart3 },

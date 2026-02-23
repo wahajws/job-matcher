@@ -54,6 +54,8 @@ import SkillGapAnalysis from "@/pages/candidate/SkillGapAnalysis";
 
 // Company pages (Phase 4)
 import CompanyAnalytics from "@/pages/company/Analytics";
+import CompanyCandidates from "@/pages/company/Candidates";
+import CompanyCandidateProfile from "@/pages/company/CandidateProfile";
 
 // Company pages (Phase 6 — AI)
 import InterviewPrep from "@/pages/company/InterviewPrep";
@@ -357,6 +359,20 @@ function Router() {
         <ProtectedRoute>
           <CompanyRoute>
             <CompanyJobDetail />
+          </CompanyRoute>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/company/candidates/:id">
+        <ProtectedRoute>
+          <CompanyRoute>
+            <CompanyCandidateProfile />
+          </CompanyRoute>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/company/candidates">
+        <ProtectedRoute>
+          <CompanyRoute>
+            <CompanyCandidates />
           </CompanyRoute>
         </ProtectedRoute>
       </Route>

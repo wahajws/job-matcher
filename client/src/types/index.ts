@@ -29,12 +29,18 @@ export interface CvFile {
 // Candidate Types
 export interface Candidate {
   id: string;
+  userId?: string;
   name: string;
   email: string;
   phone: string;
   country: string;
   countryCode: string;
   headline?: string;
+  photoUrl?: string;
+  bio?: string;
+  linkedinUrl?: string;
+  githubUrl?: string;
+  portfolioUrl?: string;
   cvFile?: CvFile;
   matrix?: CandidateMatrix;
   createdAt: Date;

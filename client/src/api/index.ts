@@ -256,8 +256,12 @@ export async function deleteJobReport(jobId: string): Promise<void> {
 }
 
 // ==================== MATCHES ====================
-export async function getMatchesForJob(jobId: string): Promise<MatchResult[]> {
-  return apiGet<MatchResult[]>(`/matches/job/${jobId}`);
+export async function getMatchesForJob(jobId: string): Promise<(MatchResult & { candidate?: any })[]> {
+  return apiGet<(MatchResult & { candidate?: any })[]>(`/matches/job/${jobId}`);
+}
+
+export async function getCompanyMatchedCandidates(): Promise<any[]> {
+  return apiGet<any[]>('/matches/company/all');
 }
 
 export async function getMatchesForCandidate(candidateId: string): Promise<

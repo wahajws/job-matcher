@@ -218,12 +218,18 @@ export class CandidateController extends BaseController {
 
       return {
         id: c.id,
+        userId: c.user_id,
         name: c.name,
         email: c.email,
         phone: c.phone,
         country: c.country,
         countryCode: c.country_code,
         headline: c.headline,
+        photoUrl: c.photo_url,
+        bio: c.bio,
+        linkedinUrl: c.linkedin_url,
+        githubUrl: c.github_url,
+        portfolioUrl: c.portfolio_url,
         cvFile: cvFile
           ? {
               id: cvFile.id,
