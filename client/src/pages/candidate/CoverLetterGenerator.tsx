@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { generateCoverLetter, getMyApplications, getSavedJobs, browseJobs } from '@/api';
+import { generateCoverLetter, getRecommendedJobs, getCandidateProfile } from '@/api';
+import { useAuthStore } from '@/store/auth';
 import type { CoverLetterResult, CoverLetterTone } from '@/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -26,36 +27,33 @@ export default function CoverLetterGenerator() {
   const [activeVersion, setActiveVersion] = useState(0);
   const [copied, setCopied] = useState(false);
 
-  // Fetch jobs the candidate applied to or saved
-  const { data: applications } = useQuery({
-    queryKey: ['my-applications-for-cl'],
-    queryFn: () => getMyApplications(),
+  const { user } = useAuthStore();
+
+  // Get candidate profile for the candidateId
+  const { data: profile } = useQuery({
+    queryKey: ['candidate-profile'],
+    queryFn: getCandidateProfile,
   });
 
-  const { data: savedJobs } = useQuery({
-    queryKey: ['saved-jobs-for-cl'],
-    queryFn: getSavedJobs,
+  const candidateId = user?.candidateId || profile?.id;
+
+  // Fetch matched jobs for this candidate
+  const { data: matchedJobs } = useQuery({
+    queryKey: ['candidate-recommended-jobs', candidateId],
+    queryFn: () => (candidateId ? getRecommendedJobs(candidateId) : Promise.resolve([])),
+    enabled: !!candidateId,
   });
 
-  // Combined list of jobs
-  const availableJobs = [
-    ...(applications || [])
-      .filter((a) => a.job)
-      .map((a) => ({
-        id: a.job!.id,
-        title: a.job!.title,
-        company: a.job!.companyProfile?.companyName || a.job!.company || '',
-        source: 'Applied',
-      })),
-    ...(savedJobs || [])
-      .filter((s) => s.job)
-      .map((s) => ({
-        id: s.job!.id,
-        title: s.job!.title,
-        company: (s.job as any)?.companyProfile?.companyName || '',
-        source: 'Saved',
-      })),
-  ].filter((j, i, arr) => arr.findIndex((x) => x.id === j.id) === i);
+  // Build job list from matches, sorted by score
+  const availableJobs = (matchedJobs || [])
+    .filter((m) => m.job)
+    .sort((a, b) => (b.score || 0) - (a.score || 0))
+    .map((m) => ({
+      id: m.job!.id,
+      title: m.job!.title,
+      company: (m.job as any)?.company || '',
+      score: m.score,
+    }));
 
   const mutation = useMutation({
     mutationFn: () => generateCoverLetter(selectedJobId, tone),
@@ -103,7 +101,7 @@ export default function CoverLetterGenerator() {
         <CardHeader>
           <CardTitle className="text-lg">Generate Cover Letter</CardTitle>
           <CardDescription>
-            Select a job from your applications or saved jobs, choose a tone, and let AI write it for you.
+            Select a job from your matches, choose a tone, and let AI write it for you.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -118,12 +116,12 @@ export default function CoverLetterGenerator() {
                   {availableJobs.map((j) => (
                     <SelectItem key={j.id} value={j.id}>
                       {j.title} {j.company && `— ${j.company}`}{' '}
-                      <span className="text-xs text-muted-foreground">({j.source})</span>
+                      <span className="text-xs text-muted-foreground">({j.score}% match)</span>
                     </SelectItem>
                   ))}
                   {availableJobs.length === 0 && (
                     <SelectItem value="_none" disabled>
-                      No jobs found — apply or save a job first
+                      No matched jobs yet — upload your CV to get matches
                     </SelectItem>
                   )}
                 </SelectContent>
