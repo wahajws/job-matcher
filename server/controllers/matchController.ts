@@ -25,9 +25,9 @@ export class MatchController extends BaseController {
               {
                 model: CandidateMatrix,
                 as: 'matrices',
-                attributes: ['skills', 'roles', 'total_years_experience', 'domains', 'education', 'languages'],
+                attributes: ['id', 'skills', 'roles', 'total_years_experience', 'domains', 'education', 'languages', 'generated_at'],
                 limit: 1,
-                order: [['created_at', 'DESC']],
+                order: [['generated_at', 'DESC']],
                 required: false,
               },
             ],
@@ -110,9 +110,9 @@ export class MatchController extends BaseController {
               {
                 model: CandidateMatrix,
                 as: 'matrices',
-                attributes: ['skills', 'roles', 'total_years_experience', 'domains'],
+                attributes: ['id', 'skills', 'roles', 'total_years_experience', 'domains', 'education', 'languages', 'generated_at'],
                 limit: 1,
-                order: [['created_at', 'DESC']],
+                order: [['generated_at', 'DESC']],
                 required: false,
               },
             ],
