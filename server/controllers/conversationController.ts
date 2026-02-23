@@ -255,36 +255,126 @@ export class ConversationController extends BaseController {
     });
   }
 
+  // ==================== GET search users for messaging ====================
+  async searchUsers(req: AuthRequest, res: Response) {
+    await this.handleRequest(req, res, async () => {
+      if (!req.user) throw Object.assign(new Error('Authentication required'), { status: 401 });
+
+      const { q = '', role: filterRole } = req.query;
+      const search = (q as string).trim();
+      const currentRole = req.user.role;
+      const userId = req.user.id;
+
+      // Build where clause
+      const where: any = {
+        id: { [Op.ne]: userId }, // exclude self
+      };
+
+      // company/admin can message anyone; candidates can message companies
+      if (currentRole === 'candidate') {
+        where.role = 'company';
+      } else if (filterRole && ['candidate', 'company', 'admin'].includes(filterRole as string)) {
+        where.role = filterRole;
+      }
+
+      if (search) {
+        where[Op.and as any] = [
+          ...(where[Op.and as any] || []),
+          {
+            [Op.or]: [
+              { name: { [Op.like]: `%${search}%` } },
+              { email: { [Op.like]: `%${search}%` } },
+              { username: { [Op.like]: `%${search}%` } },
+            ],
+          },
+        ];
+      }
+
+      const users = await User.findAll({
+        where,
+        attributes: ['id', 'name', 'email', 'role'],
+        limit: 20,
+        order: [['name', 'ASC']],
+      });
+
+      // Enrich with profile info
+      const result = await Promise.all(users.map(async (u: any) => {
+        let photoUrl: string | null = null;
+        let headline: string | null = null;
+
+        if (u.role === 'candidate') {
+          const c = await Candidate.findOne({
+            where: { user_id: u.id },
+            attributes: ['photo_url', 'headline', 'name'],
+          });
+          if (c) {
+            photoUrl = c.photo_url || null;
+            headline = c.headline || null;
+          }
+        } else if (u.role === 'company') {
+          const cp = await CompanyProfile.findOne({
+            where: { user_id: u.id },
+            attributes: ['logo_url', 'company_name'],
+          });
+          if (cp) {
+            photoUrl = cp.logo_url || null;
+            headline = cp.company_name || null;
+          }
+        }
+
+        return {
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          role: u.role,
+          photoUrl,
+          headline,
+        };
+      }));
+
+      return result;
+    });
+  }
+
   // ==================== POST create a new conversation ====================
   async createConversation(req: AuthRequest, res: Response) {
     await this.handleRequest(req, res, async () => {
       if (!req.user) throw Object.assign(new Error('Authentication required'), { status: 401 });
 
-      const { candidateUserId, jobId, message } = req.body;
+      // Accept both targetUserId (new) and candidateUserId (legacy)
+      const { targetUserId, candidateUserId, jobId, message } = req.body;
+      const recipientId = targetUserId || candidateUserId;
 
-      if (!candidateUserId) {
-        throw Object.assign(new Error('candidateUserId is required'), { status: 400 });
+      if (!recipientId) {
+        throw Object.assign(new Error('targetUserId is required'), { status: 400 });
+      }
+
+      if (recipientId === req.user.id) {
+        throw Object.assign(new Error('Cannot message yourself'), { status: 400 });
       }
 
       // Verify the target user exists
-      const targetUser = await User.findByPk(candidateUserId);
+      const targetUser = await User.findByPk(recipientId);
       if (!targetUser) throw Object.assign(new Error('Target user not found'), { status: 404 });
 
       const userId = req.user.id;
 
-      // Determine participant order: company user is participant_1, candidate is participant_2
+      // Determine participant order consistently (lower ID first for non-job convos)
+      // For job-linked conversations keep old logic: company=p1, candidate=p2
       let p1 = userId;
-      let p2 = candidateUserId;
+      let p2 = recipientId;
       if (req.user.role === 'candidate') {
-        p1 = candidateUserId;
+        p1 = recipientId;
         p2 = userId;
       }
 
-      // Check if conversation already exists
+      // Check if conversation already exists (check both orderings for direct messages)
       const existing = await Conversation.findOne({
         where: {
-          participant_1_id: p1,
-          participant_2_id: p2,
+          [Op.or]: [
+            { participant_1_id: p1, participant_2_id: p2 },
+            { participant_1_id: p2, participant_2_id: p1 },
+          ],
           ...(jobId ? { job_id: jobId } : { job_id: null }),
         },
       });
@@ -292,7 +382,7 @@ export class ConversationController extends BaseController {
       if (existing) {
         // Conversation exists — send message there instead
         if (message) {
-          const msg = await Message.create({
+          await Message.create({
             id: randomUUID(),
             conversation_id: existing.id,
             sender_id: userId,
@@ -324,9 +414,8 @@ export class ConversationController extends BaseController {
         });
 
         // Notify the other user
-        const otherUserId = p1 === userId ? p2 : p1;
         notificationService.create({
-          userId: otherUserId,
+          userId: recipientId,
           type: 'message_received',
           title: 'New Message',
           body: `${req.user.name}: ${message.trim().substring(0, 100)}`,

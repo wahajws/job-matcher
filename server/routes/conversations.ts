@@ -9,6 +9,11 @@ router.get('/', authenticateToken, (req, res) =>
   conversationController.getConversations(req, res)
 );
 
+// GET /api/conversations/search-users — search users for new conversation
+router.get('/search-users', authenticateToken, (req, res) =>
+  conversationController.searchUsers(req, res)
+);
+
 // GET /api/conversations/unread-count — unread message count
 router.get('/unread-count', authenticateToken, (req, res) =>
   conversationController.getUnreadCount(req, res)

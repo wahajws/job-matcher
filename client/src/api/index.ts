@@ -561,7 +561,8 @@ export async function sendMessage(conversationId: string, content: string): Prom
 }
 
 export async function createConversation(data: {
-  candidateUserId: string;
+  targetUserId?: string;
+  candidateUserId?: string;
   jobId?: string;
   message?: string;
 }): Promise<{ id: string; isNew: boolean }> {
@@ -570,6 +571,23 @@ export async function createConversation(data: {
 
 export async function getUnreadMessageCount(): Promise<{ unreadCount: number }> {
   return apiGet<{ unreadCount: number }>('/conversations/unread-count');
+}
+
+export interface MessageableUser {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  photoUrl: string | null;
+  headline: string | null;
+}
+
+export async function searchUsersForMessaging(query: string, role?: string): Promise<MessageableUser[]> {
+  const params = new URLSearchParams();
+  if (query) params.append('q', query);
+  if (role) params.append('role', role);
+  const qs = params.toString();
+  return apiGet<MessageableUser[]>(`/conversations/search-users${qs ? `?${qs}` : ''}`);
 }
 
 // ==================== SAVED JOBS ====================

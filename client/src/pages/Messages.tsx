@@ -1,11 +1,14 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/auth';
 import {
   getConversations,
   getConversationMessages,
   sendMessage,
+  createConversation,
+  searchUsersForMessaging,
 } from '@/api';
+import type { MessageableUser } from '@/api';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,12 +16,25 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
 import {
   MessageSquare,
   Send,
   Search,
   Briefcase,
   ArrowLeft,
+  PenSquare,
+  User as UserIcon,
+  Building2,
+  Shield,
+  Loader2,
 } from 'lucide-react';
 import { formatDistanceToNow, format } from 'date-fns';
 import type { ConversationPreview, ChatMessage } from '@/types';
@@ -31,6 +47,77 @@ export default function MessagesPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // New Message dialog state
+  const [newMsgOpen, setNewMsgOpen] = useState(false);
+  const [newMsgSearch, setNewMsgSearch] = useState('');
+  const [newMsgResults, setNewMsgResults] = useState<MessageableUser[]>([]);
+  const [newMsgLoading, setNewMsgLoading] = useState(false);
+  const [newMsgSelected, setNewMsgSelected] = useState<MessageableUser | null>(null);
+  const [newMsgText, setNewMsgText] = useState('');
+  const [newMsgSending, setNewMsgSending] = useState(false);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const canStartConversation = user?.role === 'company' || user?.role === 'admin';
+
+  // Load initial user list when dialog opens
+  useEffect(() => {
+    if (newMsgOpen && newMsgResults.length === 0 && !newMsgSearch && !newMsgSelected) {
+      (async () => {
+        setNewMsgLoading(true);
+        try {
+          const results = await searchUsersForMessaging('');
+          setNewMsgResults(results);
+        } catch { /* ignore */ }
+        finally { setNewMsgLoading(false); }
+      })();
+    }
+  }, [newMsgOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Debounced user search
+  const handleNewMsgSearch = useCallback((value: string) => {
+    setNewMsgSearch(value);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = setTimeout(async () => {
+      setNewMsgLoading(true);
+      try {
+        const results = await searchUsersForMessaging(value.trim());
+        setNewMsgResults(results);
+      } catch {
+        setNewMsgResults([]);
+      } finally {
+        setNewMsgLoading(false);
+      }
+    }, 300);
+  }, []);
+
+  const handleStartConversation = async () => {
+    if (!newMsgSelected) return;
+    setNewMsgSending(true);
+    try {
+      const result = await createConversation({
+        targetUserId: newMsgSelected.id,
+        message: newMsgText.trim() || undefined,
+      });
+      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      setSelectedConversationId(result.id);
+      setNewMsgOpen(false);
+      resetNewMsgDialog();
+    } catch (err) {
+      console.error('Failed to create conversation:', err);
+    } finally {
+      setNewMsgSending(false);
+    }
+  };
+
+  const resetNewMsgDialog = () => {
+    setNewMsgSearch('');
+    setNewMsgResults([]);
+    setNewMsgSelected(null);
+    setNewMsgText('');
+    setNewMsgLoading(false);
+    setNewMsgSending(false);
+  };
 
   // Fetch conversations
   const { data: rawConversations, isLoading: loadingConvos } = useQuery({
@@ -98,11 +185,123 @@ export default function MessagesPage() {
   const getInitials = (name: string) =>
     name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
 
+  const getRoleIcon = (role: string) => {
+    if (role === 'candidate') return <UserIcon className="w-3 h-3" />;
+    if (role === 'company') return <Building2 className="w-3 h-3" />;
+    return <Shield className="w-3 h-3" />;
+  };
+
   return (
     <div className="h-[calc(100vh-5rem)] flex flex-col">
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold">Messages</h1>
+        {canStartConversation && (
+          <Button onClick={() => { resetNewMsgDialog(); setNewMsgOpen(true); }} className="gap-2">
+            <PenSquare className="w-4 h-4" />
+            New Message
+          </Button>
+        )}
       </div>
+
+      {/* New Message Dialog */}
+      <Dialog open={newMsgOpen} onOpenChange={(open) => { if (!open) { resetNewMsgDialog(); } setNewMsgOpen(open); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>New Message</DialogTitle>
+          </DialogHeader>
+
+          {!newMsgSelected ? (
+            /* Step 1: Search & select a user */
+            <div className="space-y-3">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search by name or email..."
+                  value={newMsgSearch}
+                  onChange={(e) => handleNewMsgSearch(e.target.value)}
+                  className="pl-9"
+                  autoFocus
+                />
+              </div>
+              <ScrollArea className="max-h-72">
+                {newMsgLoading ? (
+                  <div className="flex justify-center py-6">
+                    <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+                  </div>
+                ) : newMsgResults.length > 0 ? (
+                  <div className="space-y-1">
+                    {newMsgResults.map((u) => (
+                      <button
+                        key={u.id}
+                        onClick={() => setNewMsgSelected(u)}
+                        className="w-full flex items-center gap-3 p-3 rounded-lg text-left hover:bg-muted/60 transition-colors"
+                      >
+                        <Avatar className="w-9 h-9">
+                          {u.photoUrl && <AvatarImage src={u.photoUrl} />}
+                          <AvatarFallback className="text-xs bg-primary/10 text-primary">
+                            {u.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{u.name}</p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {u.headline || u.email}
+                          </p>
+                        </div>
+                        <Badge variant="outline" className="gap-1 text-[10px] capitalize">
+                          {getRoleIcon(u.role)}
+                          {u.role}
+                        </Badge>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-center text-sm text-muted-foreground py-6">
+                    {newMsgSearch.trim() ? 'No users found' : 'Type a name or email to search'}
+                  </p>
+                )}
+              </ScrollArea>
+            </div>
+          ) : (
+            /* Step 2: Compose message */
+            <div className="space-y-4">
+              <div className="flex items-center gap-3 p-3 bg-muted/40 rounded-lg">
+                <Avatar className="w-9 h-9">
+                  {newMsgSelected.photoUrl && <AvatarImage src={newMsgSelected.photoUrl} />}
+                  <AvatarFallback className="text-xs bg-primary/10 text-primary">
+                    {newMsgSelected.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{newMsgSelected.name}</p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {newMsgSelected.headline || newMsgSelected.email}
+                  </p>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => setNewMsgSelected(null)}>
+                  Change
+                </Button>
+              </div>
+              <Textarea
+                placeholder="Write your message... (optional — you can also send it after)"
+                value={newMsgText}
+                onChange={(e) => setNewMsgText(e.target.value)}
+                rows={4}
+                autoFocus
+              />
+            </div>
+          )}
+
+          <DialogFooter>
+            {newMsgSelected && (
+              <Button onClick={handleStartConversation} disabled={newMsgSending}>
+                {newMsgSending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                {newMsgText.trim() ? 'Send Message' : 'Start Conversation'}
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Card className="flex-1 flex overflow-hidden">
         {/* Conversation List */}
@@ -138,13 +337,21 @@ export default function MessagesPage() {
                 <p className="text-sm text-muted-foreground">
                   {searchTerm ? 'No conversations found' : 'No conversations yet'}
                 </p>
-                {!searchTerm && (
+                {!searchTerm && canStartConversation ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-3 gap-2"
+                    onClick={() => { resetNewMsgDialog(); setNewMsgOpen(true); }}
+                  >
+                    <PenSquare className="w-3.5 h-3.5" />
+                    Start a conversation
+                  </Button>
+                ) : !searchTerm ? (
                   <p className="text-xs text-muted-foreground mt-1">
-                    {user?.role === 'company'
-                      ? 'Start a conversation from a candidate\'s application'
-                      : 'Companies can reach out to you here'}
+                    Companies can reach out to you here
                   </p>
-                )}
+                ) : null}
               </div>
             ) : (
               filteredConversations.map((conv) => (
