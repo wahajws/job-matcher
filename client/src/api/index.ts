@@ -82,6 +82,23 @@ export async function uploadCandidatePhoto(file: File): Promise<{ photoUrl: stri
   return apiUpload<{ photoUrl: string }>('/candidate/profile/photo', formData);
 }
 
+/**
+ * Upload CV as the authenticated candidate (links to own profile).
+ * Triggers matrix generation + job matching in the background.
+ */
+export async function uploadCandidateCv(file: File): Promise<{ message: string; cvFile: any }> {
+  const formData = new FormData();
+  formData.append('file', file);
+  return apiUpload<{ message: string; cvFile: any }>('/candidate/cv/upload', formData);
+}
+
+/**
+ * Re-run matrix generation + matching for the authenticated candidate.
+ */
+export async function rerunCandidateMatching(): Promise<{ message: string }> {
+  return apiPost<{ message: string }>('/candidate/cv/rerun');
+}
+
 // ==================== COMPANY PROFILE (self) ====================
 export async function getCompanyProfile(): Promise<CompanyProfile> {
   return apiGet<CompanyProfile>('/company/profile');

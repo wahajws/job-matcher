@@ -13,8 +13,9 @@ const router = Router();
 const uploadsDir = path.join(process.cwd(), 'uploads');
 const photosDir = path.join(uploadsDir, 'photos');
 const logosDir = path.join(uploadsDir, 'logos');
+const cvsDir = path.join(uploadsDir, 'cvs');
 
-[uploadsDir, photosDir, logosDir].forEach((dir) => {
+[uploadsDir, photosDir, logosDir, cvsDir].forEach((dir) => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -83,6 +84,49 @@ router.post(
   uploadLimiter,
   uploadPhoto.single('photo'),
   (req, res) => profileController.uploadCandidatePhoto(req as any, res)
+);
+
+// ==================== CANDIDATE CV UPLOAD (self) ====================
+const cvStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, cvsDir),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    const name = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9]/g, '_');
+    const uniqueName = `${name}-${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+    cb(null, uniqueName);
+  },
+});
+
+const cvFilter = (_req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+  const isValidMime = file.mimetype === 'application/pdf' || file.mimetype === 'application/x-pdf';
+  const isValidExt = path.extname(file.originalname).toLowerCase() === '.pdf';
+  if (isValidMime || isValidExt) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only PDF files are allowed'));
+  }
+};
+
+const uploadCv = multer({
+  storage: cvStorage,
+  fileFilter: cvFilter,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB for CVs
+});
+
+router.post(
+  '/candidate/cv/upload',
+  authenticateToken,
+  requireCandidate,
+  uploadLimiter,
+  uploadCv.single('file'),
+  (req, res) => profileController.uploadCandidateCv(req as any, res)
+);
+
+router.post(
+  '/candidate/cv/rerun',
+  authenticateToken,
+  requireCandidate,
+  (req, res) => profileController.rerunCandidateMatching(req as any, res)
 );
 
 // ==================== PRIVACY SETTINGS ====================

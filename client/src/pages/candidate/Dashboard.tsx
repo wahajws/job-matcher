@@ -4,9 +4,9 @@ import { Link } from 'wouter';
 import { useAuthStore } from '@/store/auth';
 import {
   getCandidateProfile,
-  uploadCvs,
+  uploadCandidateCv,
   getRecommendedJobs,
-  rerunMatching,
+  rerunCandidateMatching,
 } from '@/api';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -36,13 +36,13 @@ export default function CandidateDashboard() {
   const [files, setFiles] = useState<UploadProgress[]>([]);
   const [showUpload, setShowUpload] = useState(false);
 
-  // Use real candidateId from auth user
-  const candidateId = user?.candidateId;
-
   const { data: profile, isLoading: profileLoading } = useQuery({
     queryKey: ['candidate-profile'],
     queryFn: getCandidateProfile,
   });
+
+  // Candidate ID from auth store or from the loaded profile
+  const candidateId = user?.candidateId || profile?.id;
 
   const { data: recommendedJobs, isLoading: jobsLoading } = useQuery({
     queryKey: ['candidate-recommended-jobs', candidateId],
@@ -51,12 +51,18 @@ export default function CandidateDashboard() {
   });
 
   const uploadMutation = useMutation({
-    mutationFn: (fileObjects: File[]) => uploadCvs(fileObjects),
+    mutationFn: (file: File) => uploadCandidateCv(file),
     onSuccess: () => {
-      toast({ title: 'CV uploaded successfully' });
+      toast({ title: 'CV uploaded successfully', description: 'AI is processing your CV. Skills and matches will appear shortly.' });
       setFiles([]);
       setShowUpload(false);
-      queryClient.invalidateQueries({ queryKey: ['candidate-profile'] });
+      // Poll profile to pick up matrix once processing completes
+      const pollInterval = setInterval(() => {
+        queryClient.invalidateQueries({ queryKey: ['candidate-profile'] });
+        queryClient.invalidateQueries({ queryKey: ['candidate-recommended-jobs'] });
+      }, 5000);
+      // Stop polling after 2 minutes
+      setTimeout(() => clearInterval(pollInterval), 120_000);
     },
     onError: (error: any) => {
       toast({ title: 'Upload failed', description: error.message, variant: 'destructive' });
@@ -64,10 +70,15 @@ export default function CandidateDashboard() {
   });
 
   const rerunMutation = useMutation({
-    mutationFn: () => (candidateId ? rerunMatching(candidateId) : Promise.reject('No candidate ID')),
+    mutationFn: () => rerunCandidateMatching(),
     onSuccess: () => {
-      toast({ title: 'Matching re-run complete' });
-      queryClient.invalidateQueries({ queryKey: ['candidate-recommended-jobs'] });
+      toast({ title: 'Re-processing started', description: 'Skills and matches will update shortly.' });
+      // Poll for updates
+      const pollInterval = setInterval(() => {
+        queryClient.invalidateQueries({ queryKey: ['candidate-profile'] });
+        queryClient.invalidateQueries({ queryKey: ['candidate-recommended-jobs'] });
+      }, 5000);
+      setTimeout(() => clearInterval(pollInterval), 120_000);
     },
   });
 
@@ -82,12 +93,9 @@ export default function CandidateDashboard() {
 
   const handleUpload = () => {
     if (files.length > 0) {
-      // Create actual File objects from the filenames stored
-      // The FileDropzone stores the actual files via onFilesAccepted, so we need to get them directly
-      // But since we're just tracking filenames, let's use the direct input approach
       const input = document.querySelector<HTMLInputElement>('input[type="file"]');
       if (input?.files?.length) {
-        uploadMutation.mutate(Array.from(input.files));
+        uploadMutation.mutate(input.files[0]);
       }
     }
   };
@@ -241,7 +249,7 @@ export default function CandidateDashboard() {
               </CardTitle>
               <CardDescription>AI-extracted profile summary</CardDescription>
             </div>
-            {candidateId && (
+            {profile?.cvFile && (
               <Button
                 variant="outline"
                 size="sm"
@@ -288,6 +296,15 @@ export default function CandidateDashboard() {
                     {profile.matrix.confidence}% confidence
                   </Badge>
                 </div>
+              </div>
+            ) : profile?.cvFile && profile.cvFile.status !== 'matrix_ready' ? (
+              <div className="flex flex-col items-center justify-center py-8 text-center">
+                <RefreshCw className="w-10 h-10 text-primary mb-3 animate-spin" />
+                <p className="text-muted-foreground font-medium">AI is processing your CV...</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Extracting skills, experience, and generating your profile matrix.
+                  This usually takes 30-60 seconds.
+                </p>
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center py-8 text-center">

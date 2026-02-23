@@ -3,8 +3,15 @@ import { Candidate } from '../db/models/Candidate.js';
 import { CompanyProfile } from '../db/models/CompanyProfile.js';
 import { CvFile } from '../db/models/CvFile.js';
 import { CandidateMatrix } from '../db/models/CandidateMatrix.js';
+import { Job, JobMatrix, Match } from '../db/models/index.js';
 import { BaseController } from '../db/base/BaseController.js';
 import type { AuthRequest } from '../middleware/auth.js';
+import { randomUUID } from 'crypto';
+import path from 'path';
+import { existsSync, statSync } from 'fs';
+import { pdfParserService } from '../services/pdfParser.js';
+import { qwenService } from '../services/qwen.js';
+import { matchController } from './matchController.js';
 
 export class ProfileController extends BaseController {
   protected model = Candidate;
@@ -191,6 +198,202 @@ export class ProfileController extends BaseController {
       await candidate.update(updates);
 
       return { message: 'Privacy settings updated successfully' };
+    });
+  }
+
+  // ==================== CANDIDATE CV UPLOAD (self) ====================
+
+  async uploadCandidateCv(req: AuthRequest, res: Response) {
+    await this.handleRequest(req, res, async () => {
+      if (!req.user) {
+        const error: any = new Error('Authentication required');
+        error.status = 401;
+        throw error;
+      }
+
+      const candidate = await Candidate.findOne({ where: { user_id: req.user.id } });
+      if (!candidate) {
+        const error: any = new Error('Candidate profile not found');
+        error.status = 404;
+        throw error;
+      }
+
+      const file = (req as any).file as Express.Multer.File;
+      if (!file) {
+        const error: any = new Error('No CV file uploaded');
+        error.status = 400;
+        throw error;
+      }
+
+      const absoluteFilePath = path.isAbsolute(file.path) ? file.path : path.resolve(file.path);
+
+      if (!existsSync(absoluteFilePath)) {
+        const error: any = new Error('Uploaded file not found on disk');
+        error.status = 500;
+        throw error;
+      }
+
+      const stats = statSync(absoluteFilePath);
+      if (stats.size === 0) {
+        const error: any = new Error('Uploaded file is empty');
+        error.status = 400;
+        throw error;
+      }
+
+      // Create CvFile record linked to the authenticated candidate
+      const cvFile = await CvFile.create({
+        id: randomUUID(),
+        candidate_id: candidate.id,
+        filename: file.originalname,
+        file_path: absoluteFilePath,
+        file_size: stats.size,
+        status: 'uploaded',
+      });
+
+      console.log(`[CandidateCvUpload] CV saved for candidate ${candidate.id} (${candidate.name}), cvFile=${cvFile.id}`);
+
+      // Trigger async processing: matrix generation + matching
+      this.processCandidateCvAsync(cvFile.id, candidate.id).catch((err) => {
+        console.error(`[CandidateCvUpload] Background processing failed:`, err);
+      });
+
+      return {
+        message: 'CV uploaded successfully. Processing will begin shortly.',
+        cvFile: {
+          id: cvFile.id,
+          filename: cvFile.filename,
+          status: cvFile.status,
+          uploadedAt: cvFile.uploaded_at,
+        },
+      };
+    });
+  }
+
+  /**
+   * Background processing: extract text, generate matrix, run matching
+   */
+  private async processCandidateCvAsync(cvFileId: string, candidateId: string) {
+    try {
+      const cvFile = await CvFile.findByPk(cvFileId);
+      if (!cvFile) {
+        console.error(`[CvProcess] CV file not found: ${cvFileId}`);
+        return;
+      }
+
+      // Update status
+      await cvFile.update({ status: 'parsing' });
+      console.log(`[CvProcess] Extracting text from PDF...`);
+
+      // Extract text from PDF
+      const cvText = await pdfParserService.extractText(cvFile.file_path);
+      if (!cvText || cvText.trim().length === 0) {
+        console.error(`[CvProcess] PDF text extraction returned empty content`);
+        await cvFile.update({ status: 'failed' });
+        return;
+      }
+
+      console.log(`[CvProcess] Extracted ${cvText.length} chars. Generating matrix via AI...`);
+
+      // Generate matrix using Qwen
+      const matrixData = await qwenService.generateCandidateMatrix(cvText);
+
+      // Delete any old matrices for this candidate (keep latest only)
+      await CandidateMatrix.destroy({ where: { candidate_id: candidateId } });
+
+      // Save new matrix
+      await CandidateMatrix.create({
+        id: randomUUID(),
+        candidate_id: candidateId,
+        cv_file_id: cvFileId,
+        skills: matrixData.skills || [],
+        roles: matrixData.roles || [],
+        total_years_experience: matrixData.totalYearsExperience || 0,
+        domains: matrixData.domains || [],
+        education: matrixData.education || [],
+        languages: matrixData.languages || [],
+        location_signals: matrixData.locationSignals || {},
+        confidence: matrixData.confidence || 0,
+        evidence: matrixData.evidence || [],
+        qwen_model_version: qwenService.getModelVersion(),
+      });
+
+      // Update CV file status
+      await cvFile.update({ status: 'matrix_ready', processed_at: new Date() });
+      console.log(`[CvProcess] ✓ Matrix ready for candidate ${candidateId}`);
+
+      // Update candidate headline if not set
+      const candidate = await Candidate.findByPk(candidateId);
+      if (candidate && !candidate.headline) {
+        const topRoles = matrixData.roles?.slice(0, 2) || [];
+        if (topRoles.length > 0) {
+          await candidate.update({ headline: topRoles.join(' | ') });
+        }
+      }
+
+      // Trigger match calculation against all published jobs
+      console.log(`[CvProcess] Running match calculation against published jobs...`);
+      await this.triggerMatchesForCandidate(candidateId);
+      console.log(`[CvProcess] ✓ Matching complete for candidate ${candidateId}`);
+    } catch (error: any) {
+      console.error(`[CvProcess] Processing failed for ${cvFileId}:`, error);
+      const cvFile = await CvFile.findByPk(cvFileId);
+      if (cvFile) {
+        await cvFile.update({ status: 'failed' });
+      }
+    }
+  }
+
+  /**
+   * Calculate matches for a candidate against all published jobs
+   */
+  private async triggerMatchesForCandidate(candidateId: string) {
+    try {
+      const jobs = await Job.findAll({
+        where: { status: 'published' },
+        include: [{ model: JobMatrix, as: 'matrix', required: true }],
+      });
+
+      console.log(`[CvProcess] Found ${jobs.length} published jobs with matrices`);
+
+      for (const job of jobs) {
+        try {
+          await matchController.calculateMatchForCandidateAndJob(candidateId, job.id);
+        } catch (err) {
+          console.error(`[CvProcess] Match failed for job ${job.id}:`, err);
+        }
+      }
+    } catch (error: any) {
+      console.error(`[CvProcess] triggerMatchesForCandidate failed:`, error);
+    }
+  }
+
+  // ==================== CANDIDATE RE-RUN MATCHING (self) ====================
+
+  async rerunCandidateMatching(req: AuthRequest, res: Response) {
+    await this.handleRequest(req, res, async () => {
+      if (!req.user) throw Object.assign(new Error('Auth required'), { status: 401 });
+
+      const candidate = await Candidate.findOne({
+        where: { user_id: req.user.id },
+        include: [
+          { model: CandidateMatrix, as: 'matrices', required: false },
+          { model: CvFile, as: 'cvFiles', required: false },
+        ],
+      });
+
+      if (!candidate) throw Object.assign(new Error('Candidate not found'), { status: 404 });
+
+      const cvFile = (candidate as any).cvFiles?.[0];
+      if (!cvFile) {
+        throw Object.assign(new Error('No CV uploaded yet. Upload a CV first.'), { status: 400 });
+      }
+
+      // Re-process in background
+      this.processCandidateCvAsync(cvFile.id, candidate.id).catch((err) => {
+        console.error(`[RerunMatching] Failed:`, err);
+      });
+
+      return { message: 'Re-processing started. Skills and matches will update shortly.' };
     });
   }
 
