@@ -1,13 +1,26 @@
-import { useState } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
-import { generateCoverLetter, getRecommendedJobs, getCandidateProfile } from '@/api';
+import { useState, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import {
+  generateCoverLetter,
+  getRecommendedJobs,
+  getCandidateProfile,
+  getCoverLetterForJob,
+  saveCoverLetter,
+  deleteCoverLetter,
+} from '@/api';
 import { useAuthStore } from '@/store/auth';
-import type { CoverLetterResult, CoverLetterTone } from '@/types';
+import type { CoverLetterResult, CoverLetterTone, SavedCoverLetter } from '@/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import {
   FileText,
@@ -16,20 +29,24 @@ import {
   Copy,
   RefreshCw,
   CheckCircle2,
+  Save,
+  Trash2,
+  Edit3,
 } from 'lucide-react';
 
 export default function CoverLetterGenerator() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { user } = useAuthStore();
   const [selectedJobId, setSelectedJobId] = useState('');
   const [tone, setTone] = useState<CoverLetterTone>('formal');
   const [result, setResult] = useState<CoverLetterResult | null>(null);
   const [editedLetter, setEditedLetter] = useState('');
   const [activeVersion, setActiveVersion] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
 
-  const { user } = useAuthStore();
-
-  // Get candidate profile for the candidateId
+  // Get candidate profile
   const { data: profile } = useQuery({
     queryKey: ['candidate-profile'],
     queryFn: getCandidateProfile,
@@ -37,14 +54,34 @@ export default function CoverLetterGenerator() {
 
   const candidateId = user?.candidateId || profile?.id;
 
-  // Fetch matched jobs for this candidate
+  // Fetch matched jobs
   const { data: matchedJobs } = useQuery({
     queryKey: ['candidate-recommended-jobs', candidateId],
     queryFn: () => (candidateId ? getRecommendedJobs(candidateId) : Promise.resolve([])),
     enabled: !!candidateId,
   });
 
-  // Build job list from matches, sorted by score
+  // Fetch saved cover letter for the selected job
+  const { data: savedLetter, isLoading: savedLetterLoading } = useQuery({
+    queryKey: ['cover-letter', selectedJobId],
+    queryFn: () => getCoverLetterForJob(selectedJobId),
+    enabled: !!selectedJobId,
+  });
+
+  // When job changes, load the saved letter if it exists
+  useEffect(() => {
+    if (savedLetter && savedLetter.content) {
+      setEditedLetter(savedLetter.content);
+      setTone(savedLetter.tone);
+      setResult(null); // Clear AI result since we're loading saved
+      setIsEditing(false);
+    } else {
+      setEditedLetter('');
+      setResult(null);
+      setIsEditing(false);
+    }
+  }, [savedLetter, selectedJobId]);
+
   const availableJobs = (matchedJobs || [])
     .filter((m) => m.job)
     .sort((a, b) => (b.score || 0) - (a.score || 0))
@@ -55,16 +92,51 @@ export default function CoverLetterGenerator() {
       score: m.score,
     }));
 
-  const mutation = useMutation({
+  // Generate cover letter via AI
+  const generateMutation = useMutation({
     mutationFn: () => generateCoverLetter(selectedJobId, tone),
     onSuccess: (data) => {
       setResult(data);
       setEditedLetter(data.coverLetter);
       setActiveVersion(0);
-      toast({ title: 'Cover Letter Generated!' });
+      setIsEditing(true);
+      toast({ title: 'Cover letter generated!' });
     },
     onError: (err: any) => {
       toast({ title: 'Generation Failed', description: err.message, variant: 'destructive' });
+    },
+  });
+
+  // Save cover letter
+  const saveMutation = useMutation({
+    mutationFn: () => saveCoverLetter(selectedJobId, editedLetter, tone),
+    onSuccess: () => {
+      toast({ title: 'Cover letter saved!', description: 'It will be available when you apply for this job.' });
+      setIsEditing(false);
+      queryClient.invalidateQueries({ queryKey: ['cover-letter', selectedJobId] });
+      queryClient.invalidateQueries({ queryKey: ['cover-letters'] });
+    },
+    onError: (err: any) => {
+      toast({ title: 'Save failed', description: err.message, variant: 'destructive' });
+    },
+  });
+
+  // Delete cover letter
+  const deleteMutation = useMutation({
+    mutationFn: () => {
+      if (!savedLetter?.id) return Promise.reject('No cover letter to delete');
+      return deleteCoverLetter(savedLetter.id);
+    },
+    onSuccess: () => {
+      toast({ title: 'Cover letter deleted' });
+      setEditedLetter('');
+      setResult(null);
+      setIsEditing(false);
+      queryClient.invalidateQueries({ queryKey: ['cover-letter', selectedJobId] });
+      queryClient.invalidateQueries({ queryKey: ['cover-letters'] });
+    },
+    onError: (err: any) => {
+      toast({ title: 'Delete failed', description: err.message, variant: 'destructive' });
     },
   });
 
@@ -84,6 +156,10 @@ export default function CoverLetterGenerator() {
     }
   };
 
+  const hasSavedLetter = savedLetter && savedLetter.content;
+  const hasContent = editedLetter.trim().length > 0;
+  const isDirty = hasSavedLetter ? editedLetter !== savedLetter!.content : hasContent;
+
   return (
     <div className="space-y-6">
       <div>
@@ -93,6 +169,7 @@ export default function CoverLetterGenerator() {
         </h1>
         <p className="text-muted-foreground mt-1">
           Generate a tailored cover letter based on your CV and a specific job posting.
+          Saved cover letters are automatically used when you apply.
         </p>
       </div>
 
@@ -108,7 +185,13 @@ export default function CoverLetterGenerator() {
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label className="text-sm font-medium mb-1.5 block">Select Job</label>
-              <Select value={selectedJobId} onValueChange={setSelectedJobId}>
+              <Select
+                value={selectedJobId}
+                onValueChange={(val) => {
+                  setSelectedJobId(val);
+                  setResult(null);
+                }}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Choose a job…" />
                 </SelectTrigger>
@@ -143,59 +226,119 @@ export default function CoverLetterGenerator() {
             </div>
           </div>
 
-          <Button
-            onClick={() => mutation.mutate()}
-            disabled={!selectedJobId || mutation.isPending}
-            className="gap-2"
-          >
-            {mutation.isPending ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Generating…
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4" />
-                Generate Cover Letter
-              </>
-            )}
-          </Button>
-          {mutation.isPending && (
+          <div className="flex gap-2 flex-wrap">
+            <Button
+              onClick={() => generateMutation.mutate()}
+              disabled={!selectedJobId || generateMutation.isPending}
+              className="gap-2"
+            >
+              {generateMutation.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Generating…
+                </>
+              ) : hasSavedLetter ? (
+                <>
+                  <RefreshCw className="w-4 h-4" />
+                  Regenerate
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  Generate Cover Letter
+                </>
+              )}
+            </Button>
+          </div>
+
+          {generateMutation.isPending && (
             <p className="text-sm text-muted-foreground">
               AI is crafting your cover letter… This may take 15-30 seconds.
             </p>
           )}
+
+          {/* Saved letter indicator */}
+          {selectedJobId && savedLetterLoading && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Loading saved cover letter…
+            </div>
+          )}
+          {hasSavedLetter && !savedLetterLoading && (
+            <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              Cover letter saved (v{savedLetter!.version}) — will be used when you apply
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      {/* Result */}
-      {result && (
+      {/* Editor — show when we have content */}
+      {(hasContent || hasSavedLetter) && !savedLetterLoading && (
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-lg">Your Cover Letter</CardTitle>
+              <CardTitle className="text-lg">
+                {hasSavedLetter && !isEditing ? 'Saved Cover Letter' : 'Your Cover Letter'}
+              </CardTitle>
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" className="gap-1" onClick={handleCopy}>
-                  {copied ? (
-                    <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
-                  ) : (
-                    <Copy className="w-3.5 h-3.5" />
-                  )}
-                  {copied ? 'Copied' : 'Copy'}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1"
-                  onClick={() => mutation.mutate()}
-                  disabled={mutation.isPending}
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  Regenerate
-                </Button>
+                {hasContent && (
+                  <Button variant="outline" size="sm" className="gap-1" onClick={handleCopy}>
+                    {copied ? (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5" />
+                    )}
+                    {copied ? 'Copied' : 'Copy'}
+                  </Button>
+                )}
+                {hasSavedLetter && !isEditing && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1"
+                    onClick={() => setIsEditing(true)}
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                    Edit
+                  </Button>
+                )}
+                {isDirty && (
+                  <Button
+                    size="sm"
+                    className="gap-1"
+                    onClick={() => saveMutation.mutate()}
+                    disabled={saveMutation.isPending || !editedLetter.trim()}
+                  >
+                    {saveMutation.isPending ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Save className="w-3.5 h-3.5" />
+                    )}
+                    Save
+                  </Button>
+                )}
+                {hasSavedLetter && (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="gap-1"
+                    onClick={() => {
+                      if (confirm('Delete this cover letter?')) {
+                        deleteMutation.mutate();
+                      }
+                    }}
+                    disabled={deleteMutation.isPending}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Delete
+                  </Button>
+                )}
               </div>
             </div>
-            {result.alternateVersions.length > 0 && (
+
+            {/* Version tabs (only for AI-generated results with alternates) */}
+            {result && result.alternateVersions.length > 0 && (
               <div className="flex gap-2 mt-2">
                 <Badge
                   variant={activeVersion === 0 ? 'default' : 'outline'}
@@ -218,11 +361,17 @@ export default function CoverLetterGenerator() {
             )}
           </CardHeader>
           <CardContent>
-            <Textarea
-              className="min-h-[400px] font-mono text-sm"
-              value={editedLetter}
-              onChange={(e) => setEditedLetter(e.target.value)}
-            />
+            {isEditing || result ? (
+              <Textarea
+                className="min-h-[400px] font-mono text-sm"
+                value={editedLetter}
+                onChange={(e) => setEditedLetter(e.target.value)}
+              />
+            ) : (
+              <div className="min-h-[200px] p-4 rounded-md bg-muted/30 whitespace-pre-wrap font-mono text-sm">
+                {editedLetter}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

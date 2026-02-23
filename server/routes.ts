@@ -21,6 +21,7 @@ import analyticsRoutes from "./routes/analytics.js";
 import savedJobRoutes from "./routes/savedJobs.js";
 import teamRoutes from "./routes/team.js";
 import aiRoutes from "./routes/ai.js";
+import coverLetterRoutes from "./routes/coverLetters.js";
 import { sanitizeStrings } from "./middleware/validate.js";
 
 export async function registerRoutes(
@@ -54,6 +55,7 @@ export async function registerRoutes(
   app.use("/api/saved-jobs", savedJobRoutes);
   app.use("/api/company/members", teamRoutes);
   app.use("/api/ai", aiRoutes);
+  app.use("/api/cover-letters", coverLetterRoutes);
 
   return httpServer;
 }

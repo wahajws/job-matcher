@@ -18,6 +18,7 @@ import { Conversation } from './Conversation.js';
 import { Message } from './Message.js';
 import { SavedJob } from './SavedJob.js';
 import { CompanyMember } from './CompanyMember.js';
+import { CoverLetter } from './CoverLetter.js';
 
 // === User associations ===
 User.hasOne(Candidate, { foreignKey: 'user_id', as: 'candidateProfile' });
@@ -120,6 +121,12 @@ CompanyMember.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 User.hasMany(CompanyMember, { foreignKey: 'invited_by', as: 'invitedMembers' });
 CompanyMember.belongsTo(User, { foreignKey: 'invited_by', as: 'inviter' });
 
+// === Cover Letters ===
+Candidate.hasMany(CoverLetter, { foreignKey: 'candidate_id', as: 'coverLetters' });
+CoverLetter.belongsTo(Candidate, { foreignKey: 'candidate_id', as: 'candidate' });
+Job.hasMany(CoverLetter, { foreignKey: 'job_id', as: 'coverLetters' });
+CoverLetter.belongsTo(Job, { foreignKey: 'job_id', as: 'job' });
+
 export {
   sequelize,
   User,
@@ -141,4 +148,5 @@ export {
   Message,
   SavedJob,
   CompanyMember,
+  CoverLetter,
 };

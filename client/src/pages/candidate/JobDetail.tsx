@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRoute, Link } from 'wouter';
 import { useAuthStore } from '@/store/auth';
-import { getJobPublic, applyToJob } from '@/api';
+import { getJobPublic, applyToJob, getCoverLetterForJob } from '@/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -32,8 +32,10 @@ import {
   Building2,
   Globe,
   Send,
-  CheckCircle2,
-  ExternalLink,
+    CheckCircle2,
+    ExternalLink,
+    FileText,
+    Loader2,
 } from 'lucide-react';
 
 export default function CandidateJobDetail() {
@@ -44,6 +46,7 @@ export default function CandidateJobDetail() {
   const queryClient = useQueryClient();
   const [showApplyDialog, setShowApplyDialog] = useState(false);
   const [coverLetter, setCoverLetter] = useState('');
+  const [coverLetterSource, setCoverLetterSource] = useState<'saved' | 'manual' | ''>('');
 
   const { data: job, isLoading: jobLoading } = useQuery({
     queryKey: ['job-public', jobId],
@@ -51,12 +54,28 @@ export default function CandidateJobDetail() {
     enabled: !!jobId,
   });
 
+  // Fetch saved cover letter for this job
+  const { data: savedCoverLetter, isLoading: savedCLLoading } = useQuery({
+    queryKey: ['cover-letter', jobId],
+    queryFn: () => getCoverLetterForJob(jobId),
+    enabled: !!jobId && user?.role === 'candidate',
+  });
+
+  // When dialog opens, auto-populate with saved cover letter
+  useEffect(() => {
+    if (showApplyDialog && savedCoverLetter?.content && coverLetterSource === '') {
+      setCoverLetter(savedCoverLetter.content);
+      setCoverLetterSource('saved');
+    }
+  }, [showApplyDialog, savedCoverLetter, coverLetterSource]);
+
   const applyMutation = useMutation({
     mutationFn: () => applyToJob(jobId, coverLetter || undefined),
     onSuccess: () => {
       toast({ title: 'Application Submitted!', description: 'Your application has been sent successfully.' });
       setShowApplyDialog(false);
       setCoverLetter('');
+      setCoverLetterSource('');
       queryClient.invalidateQueries({ queryKey: ['job-public', jobId] });
       queryClient.invalidateQueries({ queryKey: ['my-applications'] });
       queryClient.invalidateQueries({ queryKey: ['browse-jobs'] });
@@ -351,8 +370,14 @@ export default function CandidateJobDetail() {
       </div>
 
       {/* Apply Dialog */}
-      <Dialog open={showApplyDialog} onOpenChange={setShowApplyDialog}>
-        <DialogContent>
+      <Dialog open={showApplyDialog} onOpenChange={(open) => {
+        setShowApplyDialog(open);
+        if (!open) {
+          setCoverLetter('');
+          setCoverLetterSource('');
+        }
+      }}>
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Apply to {job.title}</DialogTitle>
             <DialogDescription>
@@ -361,15 +386,49 @@ export default function CandidateJobDetail() {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div>
-              <label className="text-sm font-medium mb-2 block">
-                Cover Letter <span className="text-muted-foreground">(optional)</span>
-              </label>
-              <Textarea
-                value={coverLetter}
-                onChange={(e) => setCoverLetter(e.target.value)}
-                placeholder="Why are you interested in this role? What makes you a great fit?"
-                rows={6}
-              />
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm font-medium">
+                  Cover Letter <span className="text-muted-foreground">(optional)</span>
+                </label>
+                {!savedCLLoading && !savedCoverLetter?.content && (
+                  <Link href="/candidate/cover-letter" className="text-xs text-primary hover:underline flex items-center gap-1">
+                    <FileText className="w-3 h-3" />
+                    Generate with AI
+                  </Link>
+                )}
+              </div>
+              {savedCLLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground p-3">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  Checking for saved cover letter…
+                </div>
+              ) : savedCoverLetter?.content && coverLetterSource === 'saved' ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400 mb-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Saved cover letter loaded (v{savedCoverLetter.version})</span>
+                  </div>
+                  <Textarea
+                    value={coverLetter}
+                    onChange={(e) => setCoverLetter(e.target.value)}
+                    placeholder="Why are you interested in this role? What makes you a great fit?"
+                    rows={6}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    You can edit the letter above before submitting. Changes won't update the saved version.
+                  </p>
+                </div>
+              ) : (
+                <Textarea
+                  value={coverLetter}
+                  onChange={(e) => {
+                    setCoverLetter(e.target.value);
+                    setCoverLetterSource('manual');
+                  }}
+                  placeholder="Why are you interested in this role? What makes you a great fit?"
+                  rows={6}
+                />
+              )}
             </div>
             {myMatch && (
               <div className="flex items-center gap-3 p-3 bg-muted rounded-lg">

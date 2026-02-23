@@ -595,6 +595,23 @@ export interface AiChatResponse {
 
 export type CoverLetterTone = 'formal' | 'conversational' | 'enthusiastic';
 
+export interface SavedCoverLetter {
+  id: string;
+  jobId: string;
+  content: string;
+  tone: CoverLetterTone;
+  version: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  job?: {
+    id: string;
+    title: string;
+    company: string;
+    department: string;
+  } | null;
+}
+
 // Admin Notes & Tags
 export interface AdminNote {
   id: string;

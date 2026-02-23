@@ -19,6 +19,7 @@ import {
   Message,
   SavedJob,
   CompanyMember,
+  CoverLetter,
 } from './models/index.js';
 
 async function migrate() {
@@ -56,6 +57,7 @@ async function migrate() {
       await Message.sync({ force: true });
       await SavedJob.sync({ force: true });
       await CompanyMember.sync({ force: true });
+      await CoverLetter.sync({ force: true });
     } else {
       // Try to sync with alter, but catch errors for tables with too many indexes
       const models = [
@@ -78,6 +80,7 @@ async function migrate() {
         { name: 'Message', model: Message, table: 'messages' },
         { name: 'SavedJob', model: SavedJob, table: 'saved_jobs' },
         { name: 'CompanyMember', model: CompanyMember, table: 'company_members' },
+        { name: 'CoverLetter', model: CoverLetter, table: 'cover_letters' },
       ];
       
       for (const { name, model, table } of models) {
@@ -313,6 +316,7 @@ async function migrate() {
     console.log('  - messages');
     console.log('  - saved_jobs');
     console.log('  - company_members');
+    console.log('  - cover_letters');
     
     await sequelize.close();
     process.exit(0);

@@ -31,6 +31,7 @@ import type {
   TeamMember,
   PrivacySettings,
   MemberRole,
+  SavedCoverLetter,
 } from '@/types';
 
 // ==================== AUTH ====================
@@ -652,6 +653,35 @@ export async function generateCoverLetter(
   tone?: CoverLetterTone
 ): Promise<CoverLetterResult> {
   return apiPost<CoverLetterResult>('/ai/cover-letter', { jobId, tone });
+}
+
+// ==================== SAVED COVER LETTERS ====================
+export async function getSavedCoverLetters(): Promise<SavedCoverLetter[]> {
+  return apiGet<SavedCoverLetter[]>('/cover-letters');
+}
+
+export async function getCoverLetterForJob(jobId: string): Promise<SavedCoverLetter | null> {
+  return apiGet<SavedCoverLetter | null>(`/cover-letters/job/${jobId}`);
+}
+
+export async function saveCoverLetter(
+  jobId: string,
+  content: string,
+  tone?: CoverLetterTone
+): Promise<SavedCoverLetter & { message: string }> {
+  return apiPost<SavedCoverLetter & { message: string }>('/cover-letters', { jobId, content, tone });
+}
+
+export async function updateCoverLetter(
+  id: string,
+  content: string,
+  tone?: CoverLetterTone
+): Promise<SavedCoverLetter & { message: string }> {
+  return apiPut<SavedCoverLetter & { message: string }>(`/cover-letters/${id}`, { content, tone });
+}
+
+export async function deleteCoverLetter(id: string): Promise<{ message: string }> {
+  return apiDelete<{ message: string }>(`/cover-letters/${id}`);
 }
 
 // 6.4 — Job Posting Review
